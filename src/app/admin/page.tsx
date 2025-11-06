@@ -363,6 +363,29 @@ export default function AdminPage() {
                         Model: {result.details.model}
                       </p>
                     )}
+                    {(result.service === 'Sentiment System' || result.service === 'Hugging Face API') && result.details?.source && (
+                      <p className="text-xs mb-2 flex items-center gap-1">
+                        <span className="text-[#a9a9a9]">Source:</span>
+                        {result.details.source === 'huggingface' && (
+                          <>
+                            <span>✅</span>
+                            <span className="text-[#00b686]">Online (HuggingFace)</span>
+                          </>
+                        )}
+                        {result.details.source === 'cached' && (
+                          <>
+                            <span>🕓</span>
+                            <span className="text-yellow-500">Using Cached Sentiment</span>
+                          </>
+                        )}
+                        {result.details.source === 'local-fallback' && (
+                          <>
+                            <span>⚠️</span>
+                            <span className="text-yellow-500">Fallback (Local)</span>
+                          </>
+                        )}
+                      </p>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className={cn(
                         "text-xs font-medium",

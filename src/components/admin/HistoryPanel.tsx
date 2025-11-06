@@ -49,7 +49,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
   };
 
   const handleBackfill = async (force = false) => {
-    if (!confirm(`Are you sure you want to ${force ? 'force rebuild' : 'backfill'} all historical data (7 days)? This should complete in 2-5 seconds.`)) {
+    if (!confirm(`Are you sure you want to ${force ? 'force rebuild' : 'backfill'} ALL historical data for all cryptocurrencies? This may take a few minutes.`)) {
       return;
     }
 
@@ -59,7 +59,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
       const response = await fetch('/api/admin/history/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: 7, force }),
+        body: JSON.stringify({ force }), // No days parameter = full history
       });
 
       if (!response.ok) throw new Error('Backfill failed');
@@ -173,7 +173,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
           className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
         >
           <RefreshCw size={16} className={cn(backfilling && "animate-spin")} />
-          Backfill All (7d)
+          Backfill All (Full History)
         </button>
         <button
           onClick={() => handleBackfill(true)}

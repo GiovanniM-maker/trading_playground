@@ -7,14 +7,16 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { symbols, days = 7, force = false } = body;
+    const { symbols, days, force = false } = body;
+    // If days is not provided or 0, fetch full history (undefined = all history)
+    const daysParam = days && days > 0 ? days : undefined;
 
     if (symbols && Array.isArray(symbols) && symbols.length > 0) {
       // Backfill specific symbols (parallel)
       const results = await Promise.all(
         symbols.map(async (symbol: string) => {
           try {
-            const series = await backfillSymbol(symbol.toUpperCase(), days, force);
+            const series = await backfillSymbol(symbol.toUpperCase(), daysParam, force);
             return {
               symbol: series.symbol,
               ok: true,
@@ -37,12 +39,12 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         results,
-        days_requested: days,
+        days_requested: daysParam || 'all',
         timestamp: new Date().toISOString(),
       });
     } else {
       // Backfill all (parallel, optimized)
-      const results = await backfillAll(days, force);
+      const results = await backfillAll(daysParam, force);
 
       return NextResponse.json({
         success: true,
@@ -51,7 +53,7 @@ export async function POST(request: Request) {
           ok: r.status === 'ok',
           error: r.error,
         })),
-        days_requested: days,
+        days_requested: daysParam || 'all',
         timestamp: new Date().toISOString(),
       });
     }

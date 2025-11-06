@@ -106,15 +106,21 @@ function sanitizeSeries(series: RawPoint[]): RawPoint[] {
   return series.filter(s => s.p >= min && s.p <= max && s.p > 0);
 }
 
-// Fetch from CoinGecko (limited range)
-export async function fetchGeckoHistory(id: string, days = 7): Promise<RawPoint[] | null> {
-  const now = Math.floor(Date.now() / 1000);
-  const from = now - days * 86400;
+// Fetch from CoinGecko (supports both limited range and full history)
+export async function fetchGeckoHistory(id: string, days?: number): Promise<RawPoint[] | null> {
+  let url: string;
   
-  // Use range endpoint for better control
-  const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart/range?vs_currency=usd&from=${from}&to=${now}`;
+  if (days && days > 0) {
+    // Limited range for refresh operations
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - days * 86400;
+    url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart/range?vs_currency=usd&from=${from}&to=${now}`;
+  } else {
+    // Full history for initial backfill
+    url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=max`;
+  }
   
-  const response = await fetchWithTimeout(url, 10000, {
+  const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
     headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
@@ -137,7 +143,8 @@ export async function fetchGeckoHistory(id: string, days = 7): Promise<RawPoint[
     );
 
     if (normalized.length > 0) {
-      console.log(`[CoinGecko ${id}] Fetched ${normalized.length} points for ${days} days`);
+      const range = days ? `${days} days` : 'full history';
+      console.log(`[CoinGecko ${id}] Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
@@ -147,15 +154,20 @@ export async function fetchGeckoHistory(id: string, days = 7): Promise<RawPoint[
   }
 }
 
-// Fetch from CryptoCompare (limited range)
-export async function fetchCompareHistory(symbol: string, days = 7): Promise<RawPoint[] | null> {
-  const now = Math.floor(Date.now() / 1000);
-  const from = now - days * 86400;
+// Fetch from CryptoCompare (supports both limited range and full history)
+export async function fetchCompareHistory(symbol: string, days?: number): Promise<RawPoint[] | null> {
+  let url: string;
   
-  // CryptoCompare limit endpoint accepts limit parameter
-  const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&limit=${days}&toTs=${now}`;
+  if (days && days > 0) {
+    // Limited range for refresh operations
+    const now = Math.floor(Date.now() / 1000);
+    url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&limit=${days}&toTs=${now}`;
+  } else {
+    // Full history for initial backfill
+    url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&allData=true`;
+  }
   
-  const response = await fetchWithTimeout(url, 10000, {
+  const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
     headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
@@ -182,7 +194,8 @@ export async function fetchCompareHistory(symbol: string, days = 7): Promise<Raw
     );
 
     if (normalized.length > 0) {
-      console.log(`[CryptoCompare ${symbol}] Fetched ${normalized.length} points for ${days} days`);
+      const range = days ? `${days} days` : 'full history';
+      console.log(`[CryptoCompare ${symbol}] Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
@@ -192,19 +205,25 @@ export async function fetchCompareHistory(symbol: string, days = 7): Promise<Raw
   }
 }
 
-// Fetch from CoinPaprika (limited range, optional fallback)
-export async function fetchPaprikaHistory(id: string, days = 7): Promise<RawPoint[] | null> {
+// Fetch from CoinPaprika (supports both limited range and full history)
+export async function fetchPaprikaHistory(id: string, days?: number): Promise<RawPoint[] | null> {
   const symbol = symbolFromGeckoId(id);
   if (!symbol) return null;
 
-  // Calculate start date
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - days);
-  const startStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD format
-
-  const url = `https://api.coinpaprika.com/v1/tickers/${symbol.toLowerCase()}/historical?start=${startStr}&limit=${days * 2}`;
+  let url: string;
   
-  const response = await fetchWithTimeout(url, 10000, {
+  if (days && days > 0) {
+    // Limited range for refresh operations
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+    url = `https://api.coinpaprika.com/v1/tickers/${symbol.toLowerCase()}/historical?start=${startStr}&limit=${days * 2}`;
+  } else {
+    // Full history for initial backfill (start from Bitcoin genesis: 2013-04-28)
+    url = `https://api.coinpaprika.com/v1/tickers/${symbol.toLowerCase()}/historical?start=2013-04-28&limit=5000`;
+  }
+  
+  const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
     headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
@@ -227,7 +246,8 @@ export async function fetchPaprikaHistory(id: string, days = 7): Promise<RawPoin
     );
 
     if (normalized.length > 0) {
-      console.log(`[CoinPaprika ${symbol}] Fetched ${normalized.length} points for ${days} days`);
+      const range = days ? `${days} days` : 'full history';
+      console.log(`[CoinPaprika ${symbol}] Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
@@ -616,9 +636,10 @@ export function sliceRange(
 }
 
 // Backfill a single symbol (optimized with early return on first successful source)
+// If days is undefined or 0, fetches full history
 export async function backfillSymbol(
   symbol: string,
-  days = 7,
+  days?: number,
   force = false
 ): Promise<FusedSeries> {
   // Check if exists and not forcing
@@ -843,8 +864,9 @@ async function logHistoryUpdate(
 }
 
 // Backfill all symbols (parallel fetching)
+// If days is undefined or 0, fetches full history for all symbols
 export async function backfillAll(
-  days = 7,
+  days?: number,
   force = false
 ): Promise<Array<{ symbol: string; status: string; error?: string }>> {
   const symbols = COINS.map(c => c.symbol);
