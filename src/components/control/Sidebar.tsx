@@ -14,6 +14,7 @@ interface SidebarProps {
 
 export function Sidebar({ service, onClose }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'logs' | 'details' | 'json'>('logs');
+  const [logs, setLogs] = useState(service?.logs || []);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -24,9 +25,36 @@ export function Sidebar({ service, onClose }: SidebarProps) {
 
     if (service) {
       document.addEventListener('keydown', handleEscape);
-      return () => document.removeEventListener('keydown', handleEscape);
+      
+      // Fetch fresh logs when service is selected
+      const fetchLogs = async () => {
+        try {
+          const response = await fetch(`/api/control/logs?service=${encodeURIComponent(service.name)}`);
+          if (response.ok) {
+            const data = await response.json();
+            setLogs(data.logs || []);
+          }
+        } catch (error) {
+          console.error('Error fetching logs:', error);
+        }
+      };
+
+      fetchLogs();
+      
+      return () => {
+        document.removeEventListener('keydown', handleEscape);
+      };
+    } else {
+      setLogs([]);
     }
   }, [service, onClose]);
+
+  // Update logs when service changes
+  useEffect(() => {
+    if (service) {
+      setLogs(service.logs || []);
+    }
+  }, [service]);
 
   if (!service) return null;
 
@@ -118,9 +146,9 @@ export function Sidebar({ service, onClose }: SidebarProps) {
               {activeTab === 'logs' && (
                 <div>
                   <h3 className="text-sm font-semibold text-[#f5f5e8] mb-3">
-                    Recent Logs (Last 30)
+                    Recent Logs (Last {logs.length})
                   </h3>
-                  <LogViewer logs={service.logs || []} />
+                  <LogViewer logs={logs} />
                 </div>
               )}
 
