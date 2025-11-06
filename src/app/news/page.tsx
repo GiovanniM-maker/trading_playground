@@ -130,6 +130,7 @@ export default function NewsPage() {
           {/* News Stats */}
           {newsStats && (
             <div className="flex gap-4 mb-4 text-xs text-[#a9a9a9]">
+              <span>Source: <span className="text-[#f5f5e8]">Local News Source</span></span>
               <span>Articles: <span className="text-[#f5f5e8]">{newsStats.count}</span></span>
               <span>Last updated: <span className="text-[#f5f5e8]">{new Date(newsStats.last_updated).toLocaleString()}</span></span>
               {newsStats.cached && <span className="text-[#00b686]">(Cached)</span>}

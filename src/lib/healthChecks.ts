@@ -146,88 +146,60 @@ export async function checkRedis(): Promise<HealthCheckResult> {
   }
 }
 
-export async function checkNewsData(): Promise<HealthCheckResult> {
+export async function checkLocalNews(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
-    const apiKey = process.env.NEWSDATA_API_KEY;
-    
-    if (!apiKey) {
+    // Check Redis connection
+    const redisCheck = await checkRedis();
+    if (redisCheck.status !== 'ok') {
       return {
-        service: 'NewsData.io API',
-        status: 'warning',
-        latency: 0,
-        message: 'Not configured - API key missing',
+        service: 'Local News',
+        status: 'error',
+        latency: Date.now() - startTime,
+        message: 'Redis connection failed',
         timestamp: Date.now(),
       };
     }
 
-    const url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=crypto&language=en&size=1`;
+    // Check seed file existence
+    const { checkSeedFileExists } = await import('./news/local');
+    const seedExists = await checkSeedFileExists();
     
-    const response = await fetchWithTimeout(
-      url,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0',
-        },
-      },
-      8000
-    );
-
     const latency = Date.now() - startTime;
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => response.statusText);
-      
-      // Log error
-      const { logError } = await import('./errors/logs');
-      await logError('NewsData.io', `HTTP ${response.status}: ${errorText}`, response.status);
-      
-      if (response.status === 401 || response.status === 403) {
-        return {
-          service: 'NewsData.io API',
-          status: 'error',
-          latency,
-          message: `Authentication failed (${response.status}) - check API key`,
-          timestamp: Date.now(),
-        };
-      }
-      if (response.status === 429) {
-        return {
-          service: 'NewsData.io API',
-          status: 'warning',
-          latency,
-          message: `Rate limit exceeded (${response.status})`,
-          timestamp: Date.now(),
-        };
-      }
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    if (!seedExists) {
+      return {
+        service: 'Local News',
+        status: 'warning',
+        latency,
+        message: 'Missing seed file at /data/news/seed.json',
+        timestamp: Date.now(),
+        details: { seed_file_exists: false },
+      };
     }
 
-    const data = await response.json();
-    
+    // Try to get news to verify it works
+    const { getLocalNews } = await import('./news/local');
+    const { results } = await getLocalNews();
+
     return {
-      service: 'NewsData.io API',
+      service: 'Local News',
       status: 'ok',
       latency,
-      message: `Connected (${data.results?.length || 0} articles available)`,
+      message: `OK (Local) - ${results.length} articles available`,
       timestamp: Date.now(),
       details: { 
-        count: data.results?.length || 0,
-        total_results: data.totalResults || 0,
+        count: results.length,
+        seed_file_exists: true,
+        source: 'local',
       },
     };
   } catch (error) {
     const latency = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-    
-    // Log error
-    const { logError } = await import('./errors/logs');
-    await logError('NewsData.io', errorMessage);
+    const errorMessage = error instanceof Error ? error.message : 'Check failed';
     
     return {
-      service: 'NewsData.io API',
+      service: 'Local News',
       status: 'error',
       latency,
       message: errorMessage,
@@ -239,97 +211,139 @@ export async function checkNewsData(): Promise<HealthCheckResult> {
 export async function checkHuggingFace(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
-    const apiKey = process.env.HUGGINGFACE_API_KEY;
+    const { hfRequest, isHFConfigured } = await import('./hf/client');
+    const { getCache, setCache } = await import('./redis');
     
-    if (!apiKey) {
+    if (!isHFConfigured()) {
       return {
         service: 'Hugging Face API',
         status: 'warning',
         latency: 0,
         message: 'Not configured - API key missing',
         timestamp: Date.now(),
+        details: { status: 'NOT_CONFIGURED' },
       };
     }
 
-    // Use only CryptoBERT model
-    const model = 'kk08/CryptoBERT';
-    const modelUrl = `https://api-inference.huggingface.co/models/${model}`;
-    
-    const response = await fetchWithTimeout(
-      modelUrl,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs: 'Bitcoin is rising!' }),
-      },
-      10000
-    );
+    // Check if there's a cached AUTH_ERROR status
+    try {
+      const hfStatus = await getCache('hf:status');
+      if (hfStatus && typeof hfStatus === 'object' && hfStatus.status === 'AUTH_ERROR') {
+        return {
+          service: 'Hugging Face API',
+          status: 'error',
+          latency: 0,
+          message: 'Authentication error - invalid or expired API key',
+          timestamp: Date.now(),
+          details: { status: 'AUTH_ERROR', cached: true },
+        };
+      }
+    } catch {
+      // Ignore cache errors
+    }
 
-    const latency = Date.now() - startTime;
+    // Try models in order (same as sentiment.ts)
+    const models = ["kk08/CryptoBERT", "cardiffnlp/twitter-roberta-base-sentiment-latest"];
+    let lastError: Error | null = null;
+    let successfulModel: string | null = null;
+    let successfulResult: any = null;
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => response.statusText);
+    for (const model of models) {
+      try {
+        const data = await hfRequest(model, { inputs: 'Bitcoin is rising!' }, { timeout: 10000 });
+        
+        // Parse response
+        let result: any;
+        if (Array.isArray(data) && data.length > 0) {
+          result = Array.isArray(data[0]) ? data[0] : data;
+        } else if (data && typeof data === 'object') {
+          result = data;
+        } else {
+          throw new Error('Invalid response format');
+        }
+
+        successfulModel = model;
+        successfulResult = result;
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        
+        // Check if it's an auth error - don't retry other models
+        if (lastError.message.includes('401') || lastError.message.includes('403') || 
+            lastError.message.includes('Unauthorized') || lastError.message.includes('Forbidden')) {
+          // Store AUTH_ERROR status
+          try {
+            await setCache('hf:status', { status: 'AUTH_ERROR', timestamp: Date.now() }, 3600);
+            const { logError } = await import('./errors/logs');
+            await logError('Hugging Face', lastError.message, lastError.message.includes('401') ? 401 : 403);
+          } catch {
+            // Ignore logging errors
+          }
+          
+          const latency = Date.now() - startTime;
+          return {
+            service: 'Hugging Face API',
+            status: 'error',
+            latency,
+            message: `Authentication failed (${lastError.message.includes('401') ? '401' : '403'}) - check API key`,
+            timestamp: Date.now(),
+            details: { 
+              status: 'AUTH_ERROR',
+              model: model.split('/').pop(),
+              error: lastError.message,
+            },
+          };
+        }
+        
+        // For other errors, try next model
+        console.warn(`[Health Check] Model ${model} failed:`, lastError.message);
+      }
+    }
+
+    if (!successfulModel || !successfulResult) {
+      const latency = Date.now() - startTime;
+      const errorMessage = lastError?.message || 'All models failed';
       
       // Log error
       const { logError } = await import('./errors/logs');
-      await logError('Hugging Face', `HTTP ${response.status}: ${errorText}`, response.status);
+      await logError('Hugging Face', errorMessage);
       
-      if (response.status === 401 || response.status === 403) {
-        return {
-          service: 'Hugging Face API',
-          status: 'error',
-          latency,
-          message: `Authentication failed (${response.status}) - check API key`,
-          timestamp: Date.now(),
-          details: { model, error: errorText },
-        };
-      }
-      
-      if (response.status === 410 || response.status === 404) {
-        return {
-          service: 'Hugging Face API',
-          status: 'error',
-          latency,
-          message: `Model ${model} unavailable (${response.status})`,
-          timestamp: Date.now(),
-          details: { model, error: errorText },
-        };
-      }
-
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      return {
+        service: 'Hugging Face API',
+        status: 'error',
+        latency,
+        message: errorMessage,
+        timestamp: Date.now(),
+        details: { status: 'FAIL', models_tried: models.length },
+      };
     }
 
-    const data = await response.json();
+    const latency = Date.now() - startTime;
     
-    // Parse CryptoBERT response format
-    let result: any;
-    if (Array.isArray(data) && data.length > 0) {
-      result = Array.isArray(data[0]) ? data[0] : data;
-    } else if (data && typeof data === 'object') {
-      result = data;
-    } else {
-      throw new Error('Invalid response format');
-    }
-
     // Extract label and score
-    const label = Array.isArray(result) 
-      ? result.find((r: any) => r.score === Math.max(...result.map((r: any) => r.score || 0)))?.label
-      : result.label;
-    const score = Array.isArray(result)
-      ? Math.max(...result.map((r: any) => r.score || 0))
-      : result.score;
+    const label = Array.isArray(successfulResult) 
+      ? successfulResult.find((r: any) => r.score === Math.max(...successfulResult.map((r: any) => r.score || 0)))?.label
+      : successfulResult.label;
+    const score = Array.isArray(successfulResult)
+      ? Math.max(...successfulResult.map((r: any) => r.score || 0))
+      : successfulResult.score;
+
+    // Clear AUTH_ERROR status on success
+    try {
+      await setCache('hf:status', { status: 'OK', model: successfulModel, timestamp: Date.now() }, 3600);
+    } catch {
+      // Ignore cache errors
+    }
 
     return {
       service: 'Hugging Face API',
       status: 'ok',
       latency,
-      message: `Working with model: ${model.split('/').pop()}`,
+      message: `Working with model: ${successfulModel.split('/').pop()}`,
       timestamp: Date.now(),
       details: { 
-        model: model.split('/').pop(),
+        status: 'OK',
+        model: successfulModel.split('/').pop(),
         label: label || 'N/A',
         score: score || 0,
         latency_ms: latency,
@@ -349,6 +363,7 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       latency,
       message: errorMessage,
       timestamp: Date.now(),
+      details: { status: 'FAIL' },
     };
   }
 }
@@ -443,13 +458,13 @@ export async function checkNewsAPI(baseUrl: string = ''): Promise<HealthCheckRes
       const { logError } = await import('./errors/logs');
       await logError('News API', `HTTP ${response.status}: ${response.statusText}`, response.status);
       
-      // Check if NewsData.io is configured as fallback
-      if ((response.status === 401 || response.status === 403) && process.env.NEWSDATA_API_KEY) {
+      // Local news is always available
+      if (response.status === 401 || response.status === 403) {
         return {
           service: 'News API',
           status: 'warning',
           latency,
-          message: 'Primary sources failed, but NewsData.io fallback available',
+          message: 'Primary sources failed, but local news available',
           timestamp: Date.now(),
           details: { usingFallback: true },
         };
@@ -568,7 +583,6 @@ export function checkVercelEnv(): HealthCheckResult {
     'UPSTASH_REDIS_REST_URL',
     'UPSTASH_REDIS_REST_TOKEN',
     'HUGGINGFACE_API_KEY',
-    'NEWSDATA_API_KEY',
   ];
 
   const missing: string[] = [];
@@ -649,7 +663,7 @@ export async function checkGitHub(): Promise<HealthCheckResult> {
 export async function runAllChecks(baseUrl: string = ''): Promise<HealthCheckResult[]> {
   const checks = [
     checkRedis(),
-    checkNewsData(),
+    checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
     checkNewsAPI(baseUrl),

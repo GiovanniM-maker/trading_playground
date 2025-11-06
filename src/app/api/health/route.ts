@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   runAllChecks,
   checkRedis,
-  checkNewsData,
+  checkLocalNews,
   checkHuggingFace,
   checkMarketAPI,
   checkNewsAPI,
@@ -27,8 +27,8 @@ export async function GET(request: Request) {
         case 'redis':
           result = await checkRedis();
           break;
-        case 'newsdata':
-          result = await checkNewsData();
+        case 'localnews':
+          result = await checkLocalNews();
           break;
         case 'huggingface':
           result = await checkHuggingFace();

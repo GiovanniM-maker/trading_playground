@@ -1,4 +1,4 @@
-import { checkRedis, checkNewsData, checkHuggingFace, checkMarketAPI, checkNewsAPI, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
+import { checkRedis, checkLocalNews, checkHuggingFace, checkMarketAPI, checkNewsAPI, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
 import { logEvent, LogEntry } from './logs';
 
 export interface ServiceStatus {
@@ -186,7 +186,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     compare,
     redisHealth,
     redisLatency,
-    newsdata,
+    localNews,
     huggingface,
     market,
     news,
@@ -199,7 +199,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     checkAPIWithLogging('CryptoCompare', 'https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD'),
     checkRedis(),
     checkRedisLatency(),
-    checkNewsData(),
+    checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
     checkNewsAPI(baseUrl),
@@ -260,7 +260,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
   const healthChecks: Array<{ name: string; result: HealthCheckResult | null }> = [
     { name: 'Redis', result: redisHealth.status === 'fulfilled' ? redisHealth.value : null },
     { name: 'Redis Latency', result: redisLatency.status === 'fulfilled' ? redisLatency.value : null },
-    { name: 'NewsData.io', result: newsdata.status === 'fulfilled' ? newsdata.value : null },
+    { name: 'Local News', result: localNews.status === 'fulfilled' ? localNews.value : null },
     { name: 'Hugging Face', result: huggingface.status === 'fulfilled' ? huggingface.value : null },
     { name: 'Market API', result: market.status === 'fulfilled' ? market.value : null },
     { name: 'News API', result: news.status === 'fulfilled' ? news.value : null },

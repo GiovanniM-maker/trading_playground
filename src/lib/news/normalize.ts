@@ -7,7 +7,7 @@ export interface NormalizedNews {
   url: string;
   published_at: string;
   image?: string;
-  source: 'NewsData.io' | 'CoinDesk' | 'CoinTelegraph' | 'CoinGecko';
+  source: 'Local News' | 'CoinDesk' | 'CoinTelegraph' | 'CoinGecko';
   instruments?: string[];
   votes?: {
     positive?: number;
