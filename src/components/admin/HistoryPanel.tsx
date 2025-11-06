@@ -184,6 +184,38 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
         </button>
         <button
           onClick={async () => {
+            if (!confirm('Backfill solo DOGE ed ETH (full history, force)?')) return;
+            setBackfilling(true);
+            const startTime = Date.now();
+            try {
+              const response = await fetch('/api/admin/history/backfill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbols: ['DOGE', 'ETH'], force: true }),
+              });
+              const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+              const result = await response.json();
+              if (result.success) {
+                const successful = result.results?.filter((r: any) => r.ok).length || 0;
+                alert(`✅ Backfill DOGE/ETH completed in ${elapsed}s\n\nSuccessful: ${successful}/2\n\nDetails:\n${JSON.stringify(result.results, null, 2)}`);
+              } else {
+                alert(`❌ Backfill failed: ${result.error}`);
+              }
+              fetchStatus();
+            } catch (error) {
+              alert(`❌ Error: ${error instanceof Error ? error.message : 'Unknown'}`);
+            } finally {
+              setBackfilling(false);
+            }
+          }}
+          disabled={backfilling}
+          className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#00b686]/20 text-[#00b686] border border-[#00b686]/30 hover:bg-[#00b686]/30 transition-colors disabled:opacity-50"
+          title="Backfill solo DOGE ed ETH"
+        >
+          🔄 Fix DOGE/ETH
+        </button>
+        <button
+          onClick={async () => {
             if (!confirm('Test refresh for BTC (7 days, force=true)?')) return;
             try {
               const start = Date.now();

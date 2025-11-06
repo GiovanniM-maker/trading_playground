@@ -662,10 +662,14 @@ export async function backfillSymbol(
     { name: 'CoinPaprika', fn: () => fetchPaprikaHistory(id, days) },
   ];
 
+  let lastError: Error | null = null;
+
   for (const source of sources) {
-    const points = await source.fn();
-    
-    if (points && points.length > 0) {
+    try {
+      console.log(`[Backfill ${symbol}] Trying ${source.name}...`);
+      const points = await source.fn();
+      
+      if (points && points.length > 0) {
       // Convert to FusedSeries format
       const fused: FusedSeries = {
         symbol,
@@ -693,12 +697,20 @@ export async function backfillSymbol(
         timestamp: Date.now(),
       });
 
-      console.log(`[Backfill ${symbol}] Success using ${source.name}, ${fused.points.length} points`);
+      console.log(`[Backfill ${symbol}] ✅ Success using ${source.name}, ${fused.points.length} points`);
       return fused;
+      }
+    } catch (error) {
+      console.error(`[Backfill ${symbol}] ❌ ${source.name} failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      // Continue to next source
     }
   }
 
-  throw new Error(`No valid data available for ${symbol} from any source`);
+  const errorMsg = lastError 
+    ? `No valid data available for ${symbol} from any source. Last error: ${lastError.message}`
+    : `No valid data available for ${symbol} from any source`;
+  throw new Error(errorMsg);
 }
 
 // Refresh history for a symbol (fetch last N days from CoinGecko and merge)
