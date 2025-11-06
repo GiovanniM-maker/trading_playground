@@ -88,6 +88,22 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
     }
   };
 
+  const handleRefreshNews = async () => {
+    try {
+      const response = await fetch('/api/news?refresh=true');
+      if (!response.ok) throw new Error('Failed to refresh news');
+      
+      const data = await response.json();
+      alert(`News refreshed: ${data.count} articles fetched`);
+      
+      // Refresh status after refreshing
+      setTimeout(() => fetchStatus(), 1000);
+    } catch (error) {
+      console.error('Error refreshing news:', error);
+      alert('Failed to refresh news');
+    }
+  };
+
   const handleExport = () => {
     const report = {
       timestamp: new Date().toISOString(),

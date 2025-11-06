@@ -4,7 +4,7 @@ import { embed, cosineSimilarity } from '../embeddings';
 const SOURCE_PRIORITY: Record<NormalizedNews['source'], number> = {
   CoinDesk: 4,
   CoinTelegraph: 3,
-  CryptoPanic: 2,
+  'NewsData.io': 2,
   CoinGecko: 1,
 };
 

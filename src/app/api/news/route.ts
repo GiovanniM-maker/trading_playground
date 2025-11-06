@@ -1,100 +1,116 @@
 import { NextResponse } from 'next/server';
-import { fetchCryptoPanic, fetchCoinDesk, fetchCoinTelegraph, fetchCoinGecko } from '@/lib/news/sources';
-import { deduplicateNews } from '@/lib/deduplicate';
+import { fetchNewsData, getCachedNewsData, cacheNewsData, NewsDataArticle } from '@/lib/news/newsdata';
 import { analyzeSentiment, sentimentToLabel } from '@/lib/sentiment';
-import { getCache, setCache } from '@/lib/redis';
-import { NormalizedNews } from '@/lib/news/normalize';
 
-interface NewsResult extends NormalizedNews {
+interface NewsResult extends NewsDataArticle {
   sentiment_score: number;
   sentiment_label: 'Bullish' | 'Neutral' | 'Bearish';
-  sentiment_confidence: number;
 }
 
 interface NewsResponse {
   results: NewsResult[];
-  source_status: {
-    CryptoPanic: 'ok' | 'error';
-    CoinDesk: 'ok' | 'error';
-    CoinTelegraph: 'ok' | 'error';
-    CoinGecko: 'ok' | 'error';
-  };
+  count: number;
+  last_updated: string;
+  cached: boolean;
 }
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request: Request) {
+  const startTime = Date.now();
+  
   try {
     const { searchParams } = new URL(request.url);
     const symbol = searchParams.get('symbol');
+    const refresh = searchParams.get('refresh') === 'true';
     
-    // Check Redis cache first
-    const cacheKey = symbol ? `news_cache:${symbol}` : 'news_cache';
-    const cached = await getCache(cacheKey);
-    if (cached && Array.isArray(cached) && cached.length > 0) {
-      // Return cached data but still refresh in background
-      return NextResponse.json({
-        results: cached,
-        cached: true,
-      });
+    // Check Redis cache first (unless refresh is requested)
+    if (!refresh) {
+      const cached = await getCachedNewsData();
+      if (cached && cached.length > 0) {
+        // Filter by symbol if provided
+        let filtered = cached;
+        if (symbol) {
+          filtered = cached.filter((item) => 
+            item.title.toUpperCase().includes(symbol.toUpperCase()) ||
+            item.description?.toUpperCase().includes(symbol.toUpperCase()) ||
+            item.source.toUpperCase().includes(symbol.toUpperCase())
+          );
+        }
+
+        // Add sentiment analysis to cached items
+        const withSentiment = await Promise.all(
+          filtered.slice(0, 50).map(async (item) => {
+            const text = `${item.title}. ${item.description || ''}`;
+            const sentiment = await analyzeSentiment(text);
+            const label = sentimentToLabel(sentiment);
+            
+            return {
+              ...item,
+              sentiment_score: sentiment.score,
+              sentiment_label: label,
+            };
+          })
+        );
+
+        return NextResponse.json({
+          results: withSentiment,
+          count: withSentiment.length,
+          last_updated: cached[0]?.published_at || new Date().toISOString(),
+          cached: true,
+        });
+      }
     }
 
-    // Fetch all sources in parallel
-    const results = await Promise.allSettled([
-      fetchCryptoPanic(),
-      fetchCoinDesk(),
-      fetchCoinTelegraph(),
-      fetchCoinGecko(),
-    ]);
+    // Fetch fresh data from NewsData.io
+    const articles = await fetchNewsData();
 
-    const allNews: NormalizedNews[] = [];
-    const sourceStatus: NewsResponse['source_status'] = {
-      CryptoPanic: 'error',
-      CoinDesk: 'error',
-      CoinTelegraph: 'error',
-      CoinGecko: 'error',
-    };
-
-    // Collect results and update status
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        const { items, status } = result.value;
-        allNews.push(...items);
-        
-        const sourceNames = ['CryptoPanic', 'CoinDesk', 'CoinTelegraph', 'CoinGecko'] as const;
-        sourceStatus[sourceNames[index]] = status;
-      } else {
-        console.error(`Source ${index} failed:`, result.reason);
+    if (articles.length === 0) {
+      // Return cached data if available, even if expired
+      const cached = await getCachedNewsData();
+      if (cached && cached.length > 0) {
+        return NextResponse.json({
+          results: cached.slice(0, 50).map(item => ({
+            ...item,
+            sentiment_score: 0.5,
+            sentiment_label: 'Neutral' as const,
+          })),
+          count: cached.length,
+          last_updated: cached[0]?.published_at || new Date().toISOString(),
+          cached: true,
+        });
       }
-    });
 
-    // Filter out invalid items
-    const validNews = allNews.filter(item => item.title && item.url && item.url !== '#');
-
-    if (validNews.length === 0) {
       return NextResponse.json({
         results: [],
-        source_status: sourceStatus,
+        count: 0,
+        last_updated: new Date().toISOString(),
+        cached: false,
       });
     }
 
-    // Deduplicate using simple title-based deduplication
-    const deduplicated = deduplicateNews(validNews);
+    // Filter by symbol if provided
+    let filtered = articles;
+    if (symbol) {
+      filtered = articles.filter((item) => 
+        item.title.toUpperCase().includes(symbol.toUpperCase()) ||
+        item.description?.toUpperCase().includes(symbol.toUpperCase()) ||
+        item.source.toUpperCase().includes(symbol.toUpperCase())
+      );
+    }
 
-    // Compute sentiment for each item using HuggingFace
+    // Compute sentiment for each item
     const withSentiment = await Promise.all(
-      deduplicated.map(async (item) => {
+      filtered.slice(0, 50).map(async (item) => {
         const text = `${item.title}. ${item.description || ''}`;
         const sentiment = await analyzeSentiment(text);
         const label = sentimentToLabel(sentiment);
         
         return {
           ...item,
-          sentiment: label,
           sentiment_score: sentiment.score,
           sentiment_label: label,
-          published_at: item.published_at,
         };
       })
     );
@@ -104,41 +120,46 @@ export async function GET(request: Request) {
       new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
     );
 
-    // Filter by symbol if provided
-    let filtered = withSentiment;
-    if (symbol) {
-      filtered = withSentiment.filter((item: any) => 
-        (item.instruments && Array.isArray(item.instruments) && 
-         item.instruments.some((inst: string) => inst.toUpperCase() === symbol.toUpperCase())) ||
-        item.title.toUpperCase().includes(symbol.toUpperCase()) ||
-        item.description?.toUpperCase().includes(symbol.toUpperCase())
-      );
-    }
+    // Cache in Redis
+    await cacheNewsData(articles);
 
-    // Limit to 50 items
-    const limited = filtered.slice(0, 50);
-
-    // Cache in Redis for 5 minutes
-    await setCache(cacheKey, limited, 300);
-
+    const latency = Date.now() - startTime;
     const response = NextResponse.json({
-      results: limited,
-      source_status: sourceStatus,
+      results: withSentiment,
+      count: withSentiment.length,
+      last_updated: new Date().toISOString(),
+      cached: false,
     });
     
-    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
+    response.headers.set('X-Latency', latency.toString());
+    response.headers.set('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=3600');
     
     return response;
   } catch (error) {
-    console.error('Error in news aggregation:', error);
+    console.error('Error in news API:', error);
+    
+    // Try to return cached data as fallback
+    const cached = await getCachedNewsData();
+    if (cached && cached.length > 0) {
+      return NextResponse.json({
+        results: cached.slice(0, 50).map(item => ({
+          ...item,
+          sentiment_score: 0.5,
+          sentiment_label: 'Neutral' as const,
+        })),
+        count: cached.length,
+        last_updated: cached[0]?.published_at || new Date().toISOString(),
+        cached: true,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+
     return NextResponse.json({
       results: [],
-      source_status: {
-        CryptoPanic: 'error',
-        CoinDesk: 'error',
-        CoinTelegraph: 'error',
-        CoinGecko: 'error',
-      },
+      count: 0,
+      last_updated: new Date().toISOString(),
+      cached: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
     }, { status: 500 });
   }
 }

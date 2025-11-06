@@ -572,8 +572,7 @@ export function checkVercelEnv(): HealthCheckResult {
     'UPSTASH_REDIS_REST_URL',
     'UPSTASH_REDIS_REST_TOKEN',
     'HUGGINGFACE_API_KEY',
-    'CRYPTOPANIC_API_KEY',
-    'CRYPTOPANIC_PLAN',
+    'NEWSDATA_API_KEY',
   ];
 
   const missing: string[] = [];
@@ -654,7 +653,7 @@ export async function checkGitHub(): Promise<HealthCheckResult> {
 export async function runAllChecks(baseUrl: string = ''): Promise<HealthCheckResult[]> {
   const checks = [
     checkRedis(),
-    checkCryptoPanic(),
+    checkNewsData(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
     checkNewsAPI(baseUrl),

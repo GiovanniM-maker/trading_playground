@@ -7,7 +7,7 @@ export interface NormalizedNews {
   url: string;
   published_at: string;
   image?: string;
-  source: 'CryptoPanic' | 'CoinDesk' | 'CoinTelegraph' | 'CoinGecko';
+  source: 'NewsData.io' | 'CoinDesk' | 'CoinTelegraph' | 'CoinGecko';
   instruments?: string[];
   votes?: {
     positive?: number;
@@ -48,32 +48,6 @@ export function stableId(item: { title: string; url: string; source: string }): 
   return `news_${Math.abs(hash).toString(36)}`;
 }
 
-export function normalizeCryptoPanic(item: any): NormalizedNews | null {
-  if (!item.title || !item.url) return null;
-  
-  const url = item.original_url || item.url;
-  const description = item.description || item.meta?.description;
-  const instruments = item.instruments?.map((inst: any) => inst.code) || [];
-  
-  const normalized: NormalizedNews = {
-    id: stableId({ title: item.title, url, source: 'CryptoPanic' }),
-    title: item.title.trim(),
-    description: description?.trim(),
-    url,
-    published_at: item.published_at || item.created_at || new Date().toISOString(),
-    image: item.image,
-    source: 'CryptoPanic',
-    instruments: instruments.length > 0 ? instruments : parseInstruments(`${item.title} ${description || ''}`),
-    votes: item.votes ? {
-      positive: item.votes.positive || 0,
-      negative: item.votes.negative || 0,
-      important: item.votes.important || 0,
-      toxic: item.votes.toxic || 0,
-    } : undefined,
-  };
-  
-  return normalized;
-}
 
 export function normalizeRSS(item: any, source: 'CoinDesk' | 'CoinTelegraph'): NormalizedNews | null {
   if (!item.title || !item.link) return null;

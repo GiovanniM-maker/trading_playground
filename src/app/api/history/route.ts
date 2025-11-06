@@ -19,13 +19,13 @@ export async function GET(request: Request) {
       );
     }
 
-    // Load history
+    // Load history (read-only from Redis)
     const series = await loadHistory(symbol);
     
     if (!series) {
       return NextResponse.json(
         {
-          error: 'History not found',
+          error: 'History not backfilled',
           message: `No historical data available for ${symbol}. Please run backfill first.`,
           hint: 'POST /api/admin/history/backfill',
         },

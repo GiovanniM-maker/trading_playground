@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { normalizeCryptoPanic, normalizeRSS, normalizeCoinGecko, NormalizedNews } from './normalize';
+import { normalizeRSS, normalizeCoinGecko, NormalizedNews } from './normalize';
 
 const FETCH_OPTIONS = {
   headers: {
@@ -32,41 +32,6 @@ async function fetchWithRetry(url: string, maxRetries = 1): Promise<Response | n
   return null;
 }
 
-export async function fetchCryptoPanic(): Promise<{ items: NormalizedNews[]; status: 'ok' | 'error' }> {
-  const apiKey = process.env.CRYPTOPANIC_API_KEY;
-  
-  if (!apiKey) {
-    console.warn('CryptoPanic API key not configured');
-    return { items: [], status: 'error' };
-  }
-  
-  try {
-    // Use new v1 endpoint
-    const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${apiKey}&public=true&size=50&regions=en`;
-    const response = await fetchWithRetry(url);
-    
-    if (!response || !response.ok) {
-      // Log error
-      if (response) {
-        const { logError } = await import('../errors/logs');
-        await logError('CryptoPanic', `HTTP ${response.status}: ${response.statusText}`, response.status);
-      }
-      return { items: [], status: 'error' };
-    }
-    
-    const data = await response.json();
-    const items = (data.results || [])
-      .map((item: any) => normalizeCryptoPanic(item))
-      .filter((item: NormalizedNews | null): item is NormalizedNews => item !== null);
-    
-    return { items, status: 'ok' };
-  } catch (error) {
-    console.error('Error fetching CryptoPanic:', error);
-    const { logError } = await import('../errors/logs');
-    await logError('CryptoPanic', error instanceof Error ? error.message : 'Unknown error');
-    return { items: [], status: 'error' };
-  }
-}
 
 export async function fetchCoinDesk(): Promise<{ items: NormalizedNews[]; status: 'ok' | 'error' }> {
   try {

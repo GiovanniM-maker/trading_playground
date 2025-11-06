@@ -425,7 +425,11 @@ export async function fuseSources(
 }
 
 // Save history to Redis (chunked by year)
-export async function saveHistory(symbol: string, series: FusedSeries): Promise<void> {
+export async function saveHistory(
+  symbol: string,
+  series: FusedSeries,
+  updateInfo?: { updated_days?: number }
+): Promise<void> {
   // Group points by year
   const byYear = new Map<number, FusedPoint[]>();
   
@@ -450,6 +454,12 @@ export async function saveHistory(symbol: string, series: FusedSeries): Promise<
     await setCache(key, encoded, 0); // No TTL
   }
 
+  // Load existing metadata to preserve last_updated if exists
+  const existingMeta = await getCache(`history:${symbol}:v1:meta`);
+  const previousLastUpdated = existingMeta && typeof existingMeta === 'object' 
+    ? (existingMeta.last_updated as number | undefined)
+    : undefined;
+
   // Save metadata
   const meta = {
     symbol,
@@ -461,6 +471,8 @@ export async function saveHistory(symbol: string, series: FusedSeries): Promise<
     sources_used: series.sources_used,
     version: series.version,
     checksum: series.checksum,
+    last_updated: Date.now(),
+    updated_days: updateInfo?.updated_days || existingMeta?.updated_days || 0,
   };
 
   await setCache(`history:${symbol}:v1:meta`, meta, 0);
@@ -564,7 +576,7 @@ export function sliceRange(
   };
 }
 
-// Backfill a single symbol
+// Backfill a single symbol (CoinGecko only)
 export async function backfillSymbol(symbol: string, force = false): Promise<FusedSeries> {
   // Check if exists and not forcing
   if (!force) {
@@ -579,29 +591,217 @@ export async function backfillSymbol(symbol: string, force = false): Promise<Fus
     throw new Error(`Unknown symbol: ${symbol}`);
   }
 
-  // Fetch from all sources
-  const [gecko, compare, paprika] = await Promise.allSettled([
-    fetchGeckoHistory(id).then(points => ({ name: 'CoinGecko', points })),
-    fetchCompareHistory(symbol).then(points => ({ name: 'CryptoCompare', points })),
-    fetchPaprikaHistory(id).then(points => points ? { name: 'CoinPaprika', points } : null),
-  ]);
-
-  const sources: Array<{ name: string; points: RawPoint[] }> = [];
+  // Fetch from CoinGecko only (authoritative source)
+  const points = await fetchGeckoHistory(id);
   
-  if (gecko.status === 'fulfilled') sources.push(gecko.value);
-  if (compare.status === 'fulfilled') sources.push(compare.value);
-  if (paprika.status === 'fulfilled' && paprika.value) sources.push(paprika.value);
-
-  if (sources.length === 0) {
-    throw new Error(`No sources available for ${symbol}`);
+  if (points.length === 0) {
+    throw new Error(`No data available from CoinGecko for ${symbol}`);
   }
 
-  // Fuse and save (now async)
-  const fused = await fuseSources(sources);
-  fused.symbol = symbol; // Ensure correct symbol
+  // Convert to FusedSeries format with confidence 1.0 (CoinGecko is authoritative)
+  const fused: FusedSeries = {
+    symbol,
+    from: points[0].t,
+    to: points[points.length - 1].t,
+    points: points.map(p => ({ t: p.t, p: p.p, c: 1.0 })),
+    sources_used: ['CoinGecko'],
+    confidence: 1.0,
+    version: 1,
+    checksum: createHash('sha256')
+      .update(JSON.stringify(points.map(p => ({ t: p.t, p: p.p, c: 1.0 }))))
+      .digest('hex')
+      .substring(0, 16),
+  };
+
   await saveHistory(symbol, fused);
+  
+  // Log the backfill
+  await logHistoryUpdate(symbol, {
+    action: 'backfill',
+    points: fused.points.length,
+    from: fused.from,
+    to: fused.to,
+    timestamp: Date.now(),
+  });
 
   return fused;
+}
+
+// Refresh history for a symbol (fetch last N days from CoinGecko and merge)
+export async function refreshHistory(
+  symbol: string,
+  days: number,
+  force = false
+): Promise<{ merged: number; total: number; updated_days: number }> {
+  const id = geckoIdFromSymbol(symbol);
+  if (!id) {
+    throw new Error(`Unknown symbol: ${symbol}`);
+  }
+
+  // Load existing history
+  const existing = await loadHistory(symbol);
+  
+  // Create backup before modifications (always backup if existing data)
+  if (existing) {
+    const backupKey = `history:${symbol}:v1:backup:${Date.now()}`;
+    const backupMeta = {
+      symbol: existing.symbol,
+      from: existing.from,
+      to: existing.to,
+      points: existing.points.length,
+      confidence: existing.confidence,
+      sources_used: existing.sources_used,
+      version: existing.version,
+      checksum: existing.checksum,
+      backup_timestamp: Date.now(),
+      force_flag: force,
+    };
+    await setCache(backupKey, backupMeta, 0);
+  }
+
+  try {
+    // Fetch last N days from CoinGecko
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
+      {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+
+    if (!response.ok) throw new Error(`CoinGecko HTTP ${response.status}`);
+    
+    const data = await response.json();
+    if (!data.prices || !Array.isArray(data.prices)) {
+      throw new Error('Invalid CoinGecko response');
+    }
+
+    // Normalize new points
+    const newRawPoints = await normalizeTimestamps(
+      data.prices.map(([t, p]: [number, number]) => ({
+        t,
+        p: Math.round(p * 100) / 100,
+      }))
+    );
+
+    const newPoints: FusedPoint[] = newRawPoints.map(p => ({
+      t: p.t,
+      p: p.p,
+      c: 1.0,
+    }));
+
+    // Merge with existing data
+    let mergedPoints: FusedPoint[];
+    let merged = 0;
+
+    if (existing && existing.points.length > 0) {
+      // Create a map of existing points by timestamp
+      const existingMap = new Map<number, FusedPoint>();
+      for (const point of existing.points) {
+        existingMap.set(point.t, point);
+      }
+
+      // Merge new points (overwrite if exists, add if new)
+      for (const newPoint of newPoints) {
+        if (existingMap.has(newPoint.t)) {
+          existingMap.set(newPoint.t, newPoint); // Update with new data
+          merged++;
+        } else {
+          existingMap.set(newPoint.t, newPoint); // Add new point
+          merged++;
+        }
+      }
+
+      mergedPoints = Array.from(existingMap.values()).sort((a, b) => a.t - b.t);
+    } else {
+      // No existing data, use new points only
+      mergedPoints = newPoints.sort((a, b) => a.t - b.t);
+      merged = newPoints.length;
+    }
+
+    // Calculate updated days (unique dates)
+    const updatedDaysSet = new Set<string>();
+    for (const point of newPoints) {
+      const date = new Date(point.t);
+      const dateStr = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+      updatedDaysSet.add(dateStr);
+    }
+    const updatedDays = updatedDaysSet.size;
+
+    // Create merged series
+    const mergedSeries: FusedSeries = {
+      symbol,
+      from: mergedPoints[0].t,
+      to: mergedPoints[mergedPoints.length - 1].t,
+      points: mergedPoints,
+      sources_used: ['CoinGecko'],
+      confidence: 1.0,
+      version: 1,
+      checksum: createHash('sha256')
+        .update(JSON.stringify(mergedPoints))
+        .digest('hex')
+        .substring(0, 16),
+    };
+
+    await saveHistory(symbol, mergedSeries, { updated_days: updatedDays });
+
+    // Log the refresh
+    await logHistoryUpdate(symbol, {
+      action: 'refresh',
+      days_requested: days,
+      points_merged: merged,
+      points_total: mergedPoints.length,
+      updated_days: updatedDays,
+      timestamp: Date.now(),
+    });
+
+    return {
+      merged,
+      total: mergedPoints.length,
+      updated_days: updatedDays,
+    };
+  } catch (error) {
+    console.error(`Error refreshing history for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+// Log history updates to Redis
+async function logHistoryUpdate(
+  symbol: string,
+  update: {
+    action: string;
+    points?: number;
+    points_merged?: number;
+    points_total?: number;
+    days_requested?: number;
+    updated_days?: number;
+    from?: number;
+    to?: number;
+    timestamp: number;
+  }
+): Promise<void> {
+  try {
+    const logKey = 'logs:history_updates';
+    const existingLogs = await getCache(logKey);
+    const logs = Array.isArray(existingLogs) ? existingLogs : [];
+    
+    logs.push({
+      symbol,
+      ...update,
+      timestamp: update.timestamp,
+    });
+
+    // Keep only last 1000 entries
+    if (logs.length > 1000) {
+      logs.shift();
+    }
+
+    await setCache(logKey, logs, 0);
+  } catch (error) {
+    console.error('Error logging history update:', error);
+    // Don't throw - logging is non-critical
+  }
 }
 
 // Backfill all symbols

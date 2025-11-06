@@ -13,17 +13,15 @@ interface NewsItem {
   url: string;
   published_at: string;
   image?: string;
-  source: 'CryptoPanic' | 'CoinDesk' | 'CoinTelegraph' | 'CoinGecko';
+  source: string;
   instruments?: string[];
   sentiment_score: number;
   sentiment_label: 'Bullish' | 'Neutral' | 'Bearish';
-  sentiment_confidence: number;
 }
 
 interface NewsResponse {
   results: NewsItem[];
   source_status: {
-    CryptoPanic: 'ok' | 'error';
     CoinDesk: 'ok' | 'error';
     CoinTelegraph: 'ok' | 'error';
     CoinGecko: 'ok' | 'error';
@@ -38,7 +36,7 @@ export default function NewsPage() {
   const [assetFilter, setAssetFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<SortOption>('latest');
   const [loading, setLoading] = useState(true);
-  const [sourceStatus, setSourceStatus] = useState<NewsResponse['source_status'] | null>(null);
+  const [newsStats, setNewsStats] = useState<{ count: number; last_updated: string; cached: boolean } | null>(null);
 
   const fetchNews = async () => {
     try {
@@ -48,7 +46,11 @@ export default function NewsPage() {
       
       const data: NewsResponse = await response.json();
       setNews(data.results || []);
-      setSourceStatus(data.source_status);
+      setNewsStats({
+        count: data.count || data.results.length,
+        last_updated: data.last_updated || new Date().toISOString(),
+        cached: data.cached || false,
+      });
       setLoading(false);
     } catch (err) {
       console.error('Error fetching news:', err);
@@ -79,7 +81,6 @@ export default function NewsPage() {
 
   const getSourceColor = (source: string) => {
     switch (source) {
-      case 'CryptoPanic': return 'bg-green-500/20 text-green-400 border-green-500/30';
       case 'CoinDesk': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
       case 'CoinTelegraph': return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
       case 'CoinGecko': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
@@ -128,15 +129,12 @@ export default function NewsPage() {
             Crypto News Feed
           </h1>
           
-          {/* Source Status */}
-          {sourceStatus && (
-            <div className="flex gap-2 mb-4 text-xs text-[#a9a9a9]">
-              <span>Sources:</span>
-              {Object.entries(sourceStatus).map(([source, status]) => (
-                <span key={source} className={cn(status === 'ok' ? 'text-[#00b686]' : 'text-[#ff4d4d]')}>
-                  {source} {status === 'ok' ? '✓' : '✗'}
-                </span>
-              ))}
+          {/* News Stats */}
+          {newsStats && (
+            <div className="flex gap-4 mb-4 text-xs text-[#a9a9a9]">
+              <span>Articles: <span className="text-[#f5f5e8]">{newsStats.count}</span></span>
+              <span>Last updated: <span className="text-[#f5f5e8]">{new Date(newsStats.last_updated).toLocaleString()}</span></span>
+              {newsStats.cached && <span className="text-[#00b686]">(Cached)</span>}
             </div>
           )}
           
@@ -144,7 +142,7 @@ export default function NewsPage() {
           <div className="flex flex-wrap gap-4 mb-4">
             <div className="flex gap-2">
               <span className="text-xs text-[#a9a9a9] self-center">Source:</span>
-              {['all', 'CryptoPanic', 'CoinDesk', 'CoinTelegraph', 'CoinGecko'].map((option) => (
+              {['all'].map((option) => (
                 <button
                   key={option}
                   onClick={() => setSourceFilter(option)}

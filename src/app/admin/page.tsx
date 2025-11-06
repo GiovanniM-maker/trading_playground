@@ -64,7 +64,6 @@ export default function AdminPage() {
   const retryCheck = useCallback(async (serviceName: string) => {
     const serviceMap: Record<string, string> = {
       'Redis': 'redis',
-      'CryptoPanic API': 'cryptopanic',
       'Hugging Face API': 'huggingface',
       'Market API': 'market',
       'News API': 'news',
