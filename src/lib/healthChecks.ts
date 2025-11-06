@@ -119,13 +119,43 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
       };
     }
 
-    const response = await fetchWithTimeout(
-      `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`
+    // Try v2 endpoint first (preferred), fallback to v1
+    let url = `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`;
+    let response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
+          'Accept': 'application/json',
+        },
+      },
+      8000
     );
+
+    // If v2 fails, try v1 endpoint
+    if (!response.ok && response.status === 502) {
+      url = `https://cryptopanic.com/api/${plan}/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`;
+      response = await fetchWithTimeout(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
+          'Accept': 'application/json',
+        },
+      }, 8000);
+    }
 
     const latency = Date.now() - startTime;
 
     if (!response.ok) {
+      // If it's a 502, suggest it might be temporary
+      if (response.status === 502) {
+        return {
+          service: 'CryptoPanic API',
+          status: 'warning',
+          latency,
+          message: 'Temporary server issue (502) - may resolve shortly',
+          timestamp: Date.now(),
+        };
+      }
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -166,38 +196,96 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       };
     }
 
-    const response = await fetchWithTimeout(
-      'https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs: 'Bitcoin is rising!' }),
+    // Try alternative models if the primary one is unavailable (410 Gone)
+    const models = [
+      'distilbert-base-uncased-finetuned-sst-2-english',
+      'cardiffnlp/twitter-roberta-base-sentiment-latest',
+      'nlptown/bert-base-multilingual-uncased-sentiment',
+    ];
+
+    let lastError: Error | null = null;
+
+    for (const model of models) {
+      try {
+        const modelUrl = `https://api-inference.huggingface.co/models/${model}`;
+        
+        const response = await fetchWithTimeout(
+          modelUrl,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ inputs: 'Bitcoin is rising!' }),
+          },
+          10000
+        );
+
+        const latency = Date.now() - startTime;
+
+        if (!response.ok) {
+          // If 410 Gone, try next model
+          if (response.status === 410) {
+            lastError = new Error(`Model ${model} is no longer available (410)`);
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Validate response format
+        if (Array.isArray(data) && data.length > 0) {
+          const result = data[0];
+          return {
+            service: 'Hugging Face API',
+            status: 'ok',
+            latency,
+            message: `Working with model: ${model.split('/').pop()}`,
+            timestamp: Date.now(),
+            details: { 
+              model: model.split('/').pop(),
+              label: result.label || result[0]?.label,
+              score: result.score || result[0]?.score,
+            },
+          };
+        }
+
+        // If response is object format
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          return {
+            service: 'Hugging Face API',
+            status: 'ok',
+            latency,
+            message: `Working with model: ${model.split('/').pop()}`,
+            timestamp: Date.now(),
+            details: { 
+              model: model.split('/').pop(),
+              label: data.label,
+              score: data.score,
+            },
+          };
+        }
+
+        throw new Error('Invalid response format');
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        // Continue to next model
+        continue;
       }
-    );
+    }
 
+    // All models failed
     const latency = Date.now() - startTime;
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    if (Array.isArray(data) && data.length > 0) {
-      return {
-        service: 'Hugging Face API',
-        status: 'ok',
-        latency,
-        message: 'Sentiment analysis working',
-        timestamp: Date.now(),
-        details: { label: data[0]?.label, score: data[0]?.score },
-      };
-    }
-
-    throw new Error('Invalid response format');
+    return {
+      service: 'Hugging Face API',
+      status: 'error',
+      latency,
+      message: lastError?.message || 'All model endpoints failed',
+      timestamp: Date.now(),
+      details: { note: 'Tried multiple models, all unavailable' },
+    };
   } catch (error) {
     const latency = Date.now() - startTime;
     return {
