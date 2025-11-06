@@ -11,13 +11,12 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
     return { label: 'NEUTRAL', score: 0.5 };
   }
 
-  // Try CryptoBERT first, then fallback models
+  // Try CryptoBERT first, then fallback models (removed deprecated distilbert)
   const models = [
     'kk08/CryptoBERT', // Primary crypto-specific model
     'cardiffnlp/twitter-roberta-base-sentiment-latest',
     'SamLowe/roberta-base-go_emotions',
     'j-hartmann/emotion-english-distilroberta-base',
-    'distilbert-base-uncased-finetuned-sst-2-english',
   ];
 
   for (const model of models) {
@@ -36,11 +35,21 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
       );
 
       if (!res.ok) {
-        // If 410 Gone, try next model
-        if (res.status === 410 && models.indexOf(model) < models.length - 1) {
+        // If 410 Gone or 404, try next model (auto-switch to CryptoBERT if primary fails)
+        if ((res.status === 410 || res.status === 404) && models.indexOf(model) < models.length - 1) {
+          // Log error if not CryptoBERT
+          if (model !== 'kk08/CryptoBERT') {
+            const { logError } = await import('./errors/logs');
+            await logError('Hugging Face', `Model ${model} unavailable (${res.status}), switching to fallback`);
+          }
           continue;
         }
         console.error(`HuggingFace API error for ${model}: ${res.status} ${res.statusText}`);
+        
+        // Log error
+        const { logError } = await import('./errors/logs');
+        await logError('Hugging Face', `Model ${model}: ${res.status} ${res.statusText}`, res.status);
+        
         if (models.indexOf(model) === models.length - 1) {
           // Last model failed
           return { label: 'NEUTRAL', score: 0.5 };

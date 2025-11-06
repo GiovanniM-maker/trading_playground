@@ -60,6 +60,10 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
     }
   };
 
+  const handleRetryAll = async () => {
+    await handleDiagnostics();
+  };
+
   const handleClearCache = async () => {
     if (!confirm('Are you sure you want to clear all cache? This action cannot be undone.')) {
       return;
@@ -192,6 +196,15 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
             </button>
 
             <button
+              onClick={handleRetryAll}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={cn(loading && "animate-spin")} />
+              Retry All
+            </button>
+
+            <button
               onClick={handleClearCache}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#ff4d4d]/20 text-[#ff4d4d] border border-[#ff4d4d]/30 hover:bg-[#ff4d4d]/30 transition-colors"
             >
@@ -252,6 +265,7 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
                 onClick={() => setSelectedService(service)}
                 logsCount={service.logs?.length || 0}
                 lastUpdate={service.lastUpdate}
+                errorCount={service.errorCount || 0}
               />
             ))}
           </div>

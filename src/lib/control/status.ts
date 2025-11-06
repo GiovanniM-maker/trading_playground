@@ -10,6 +10,7 @@ export interface ServiceStatus {
   error?: string;
   lastUpdate?: string;
   logs?: LogEntry[];
+  errorCount?: number;
 }
 
 export interface ControlStatus {
@@ -250,9 +251,18 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
 
   // Load logs for each service
   const { getLogs } = await import('./logs');
+  const { getErrorCountByService } = await import('../errors/logs');
+  
+  const errorCounts = await getErrorCountByService();
+  
   for (const serviceName of Object.keys(services)) {
     const logs = await getLogs(serviceName);
     services[serviceName].logs = logs;
+    
+    // Add error count to service status
+    if (errorCounts[serviceName]) {
+      services[serviceName].errorCount = errorCounts[serviceName];
+    }
   }
 
   return {

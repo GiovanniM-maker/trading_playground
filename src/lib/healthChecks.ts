@@ -26,6 +26,49 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout 
   }
 }
 
+// Helper for retry with exponential backoff
+async function fetchWithRetryHelper(url: string, options: RequestInit = {}, maxRetries = 2, timeout = TIMEOUT_MS): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      try {
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        
+        // Retry on 5xx errors
+        if (response.status >= 500 && response.status < 600 && attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        return response;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+      
+      if (attempt === maxRetries) {
+        throw lastError;
+      }
+      
+      const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError || new Error('Max retries exceeded');
+}
+
 export async function checkRedis(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
@@ -107,76 +150,45 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
     const apiKey = process.env.CRYPTOPANIC_API_KEY;
-    const plan = process.env.CRYPTOPANIC_PLAN || 'developer';
     
     if (!apiKey) {
       return {
         service: 'CryptoPanic API',
-        status: 'error',
+        status: 'warning',
         latency: 0,
-        message: 'Missing API key',
+        message: 'Not configured - API key missing',
         timestamp: Date.now(),
       };
     }
 
-    // Try multiple endpoint variations
-    const endpoints = [
-      `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`,
-      `https://cryptopanic.com/api/${plan}/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`,
-      `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&public=true&size=1`, // Without currencies filter
-    ];
-
-    let response: Response | null = null;
-    let lastError: Error | null = null;
-
-    for (const url of endpoints) {
-      try {
-        response = await fetchWithTimeout(
-          url,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
-              'Accept': 'application/json',
-            },
-          },
-          8000
-        );
-
-        // If we get a successful response or non-500 error, stop trying
-        if (response.ok || (response.status !== 500 && response.status !== 502)) {
-          break;
-        }
-
-        // If 500 or 502, try next endpoint
-        if (response.status === 500 || response.status === 502) {
-          lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
-          continue;
-        }
-
-        // For other errors, stop trying
-        break;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('Network error');
-        continue;
-      }
-    }
-
-    if (!response) {
-      throw lastError || new Error('All endpoints failed');
-    }
+    // Use new v1 endpoint
+    const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${apiKey}&public=true&size=1`;
+    
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
+          'Accept': 'application/json',
+        },
+      },
+      8000
+    );
 
     const latency = Date.now() - startTime;
 
     if (!response.ok) {
-      // Classify error types
-      if (response.status === 500 || response.status === 502) {
+      // Log error
+      const { logError } = await import('./errors/logs');
+      await logError('CryptoPanic', `HTTP ${response.status}: ${response.statusText}`, response.status);
+      
+      if (response.status === 404) {
         return {
           service: 'CryptoPanic API',
-          status: 'warning',
+          status: 'error',
           latency,
-          message: `Server issue (${response.status}) - CryptoPanic may be experiencing downtime`,
+          message: `Endpoint not found (404) - API may have changed`,
           timestamp: Date.now(),
-          details: { note: 'This is a temporary issue on CryptoPanic\'s side' },
         };
       }
       if (response.status === 401 || response.status === 403) {
@@ -185,6 +197,15 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
           status: 'error',
           latency,
           message: `Authentication failed (${response.status}) - check API key`,
+          timestamp: Date.now(),
+        };
+      }
+      if (response.status === 500 || response.status === 502) {
+        return {
+          service: 'CryptoPanic API',
+          status: 'warning',
+          latency,
+          message: `Server issue (${response.status}) - CryptoPanic may be experiencing downtime`,
           timestamp: Date.now(),
         };
       }
@@ -203,11 +224,17 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('CryptoPanic', errorMessage);
+    
     return {
       service: 'CryptoPanic API',
       status: 'error',
       latency,
-      message: error instanceof Error ? error.message : 'Connection failed',
+      message: errorMessage,
       timestamp: Date.now(),
     };
   }
@@ -228,13 +255,12 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       };
     }
 
-    // Try CryptoBERT first, then alternative models
+    // Try CryptoBERT first, then alternative models (removed deprecated distilbert)
     const models = [
       'kk08/CryptoBERT', // Primary crypto-specific model
       'cardiffnlp/twitter-roberta-base-sentiment-latest',
       'SamLowe/roberta-base-go_emotions',
       'j-hartmann/emotion-english-distilroberta-base',
-      'distilbert-base-uncased-finetuned-sst-2-english', // Keep as last fallback
     ];
 
     let lastError: Error | null = null;
@@ -259,9 +285,9 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
         const latency = Date.now() - startTime;
 
         if (!response.ok) {
-          // If 410 Gone, try next model
-          if (response.status === 410) {
-            lastError = new Error(`Model ${model} is no longer available (410)`);
+          // If 410 Gone or 404, try next model (don't log as error for deprecated models)
+          if (response.status === 410 || response.status === 404) {
+            lastError = new Error(`Model ${model} is no longer available (${response.status})`);
             continue;
           }
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -335,11 +361,36 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
 export async function checkMarketAPI(baseUrl: string = ''): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
-    const response = await fetchWithTimeout(`${baseUrl}/api/markets`);
+    const url = baseUrl ? `${baseUrl}/api/markets` : '/api/markets';
+    const response = await fetchWithTimeout(url, {}, 8000);
 
     const latency = Date.now() - startTime;
 
     if (!response.ok) {
+      // Log error
+      const { logError } = await import('./errors/logs');
+      await logError('Market API', `HTTP ${response.status}: ${response.statusText}`, response.status);
+      
+      // Try to get cached data as fallback
+      if (response.status === 401 || response.status === 403) {
+        try {
+          const { getCache } = await import('./redis');
+          const cached = await getCache('market_live_prices');
+          if (cached) {
+            return {
+              service: 'Market API',
+              status: 'warning',
+              latency,
+              message: `Auth failed but using cached data`,
+              timestamp: Date.now(),
+              details: { usingCache: true },
+            };
+          }
+        } catch {
+          // Ignore cache errors
+        }
+      }
+      
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -368,11 +419,17 @@ export async function checkMarketAPI(baseUrl: string = ''): Promise<HealthCheckR
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('Market API', errorMessage);
+    
     return {
       service: 'Market API',
       status: 'error',
       latency,
-      message: error instanceof Error ? error.message : 'Connection failed',
+      message: errorMessage,
       timestamp: Date.now(),
     };
   }
@@ -381,11 +438,28 @@ export async function checkMarketAPI(baseUrl: string = ''): Promise<HealthCheckR
 export async function checkNewsAPI(baseUrl: string = ''): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
-    const response = await fetchWithTimeout(`${baseUrl}/api/news`);
+    const url = baseUrl ? `${baseUrl}/api/news` : '/api/news';
+    const response = await fetchWithTimeout(url, {}, 8000);
 
     const latency = Date.now() - startTime;
 
     if (!response.ok) {
+      // Log error
+      const { logError } = await import('./errors/logs');
+      await logError('News API', `HTTP ${response.status}: ${response.statusText}`, response.status);
+      
+      // Check if NewsData.io is configured as fallback
+      if ((response.status === 401 || response.status === 403) && process.env.NEWSDATA_API_KEY) {
+        return {
+          service: 'News API',
+          status: 'warning',
+          latency,
+          message: 'Primary sources failed, but NewsData.io fallback available',
+          timestamp: Date.now(),
+          details: { usingFallback: true },
+        };
+      }
+      
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -413,11 +487,17 @@ export async function checkNewsAPI(baseUrl: string = ''): Promise<HealthCheckRes
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('News API', errorMessage);
+    
     return {
       service: 'News API',
       status: 'error',
       latency,
-      message: error instanceof Error ? error.message : 'Connection failed',
+      message: errorMessage,
       timestamp: Date.now(),
     };
   }

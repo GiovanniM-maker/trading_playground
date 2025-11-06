@@ -11,6 +11,7 @@ interface ServiceCardProps {
   onClick: () => void;
   logsCount?: number;
   lastUpdate?: string;
+  errorCount?: number;
 }
 
 export function ServiceCard({
@@ -21,6 +22,7 @@ export function ServiceCard({
   onClick,
   logsCount = 0,
   lastUpdate,
+  errorCount = 0,
 }: ServiceCardProps) {
   const getStatusIcon = () => {
     switch (status) {
@@ -123,6 +125,14 @@ export function ServiceCard({
             <span className="text-[#a9a9a9]">Logs:</span>
             <span className="text-[#f5f5e8] text-xs">
               {logsCount} entries
+            </span>
+          </div>
+        )}
+        {errorCount > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-[#a9a9a9]">Errors:</span>
+            <span className="text-[#ff4d4d] text-xs font-medium">
+              {errorCount}
             </span>
           </div>
         )}

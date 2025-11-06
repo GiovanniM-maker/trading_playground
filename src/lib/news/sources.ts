@@ -33,14 +33,24 @@ async function fetchWithRetry(url: string, maxRetries = 1): Promise<Response | n
 }
 
 export async function fetchCryptoPanic(): Promise<{ items: NormalizedNews[]; status: 'ok' | 'error' }> {
-  const apiKey = process.env.CRYPTOPANIC_API_KEY || '0dd6eb49e5b72d5af431984ffed73d5a7f98d9ad';
-  const plan = process.env.CRYPTOPANIC_PLAN || 'developer';
+  const apiKey = process.env.CRYPTOPANIC_API_KEY;
+  
+  if (!apiKey) {
+    console.warn('CryptoPanic API key not configured');
+    return { items: [], status: 'error' };
+  }
   
   try {
-    const url = `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&public=true&size=50&regions=en`;
+    // Use new v1 endpoint
+    const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${apiKey}&public=true&size=50&regions=en`;
     const response = await fetchWithRetry(url);
     
     if (!response || !response.ok) {
+      // Log error
+      if (response) {
+        const { logError } = await import('../errors/logs');
+        await logError('CryptoPanic', `HTTP ${response.status}: ${response.statusText}`, response.status);
+      }
       return { items: [], status: 'error' };
     }
     
@@ -52,6 +62,8 @@ export async function fetchCryptoPanic(): Promise<{ items: NormalizedNews[]; sta
     return { items, status: 'ok' };
   } catch (error) {
     console.error('Error fetching CryptoPanic:', error);
+    const { logError } = await import('../errors/logs');
+    await logError('CryptoPanic', error instanceof Error ? error.message : 'Unknown error');
     return { items: [], status: 'error' };
   }
 }
