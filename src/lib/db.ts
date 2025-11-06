@@ -170,8 +170,8 @@ export async function getPortfolio(model: string): Promise<Portfolio | null> {
 
     // Convert to Portfolio interface
     // Positions are stored as JSON in the database
-    const positions: Position[] = dbPortfolio.positions 
-      ? (Array.isArray(dbPortfolio.positions) ? dbPortfolio.positions as Position[] : [])
+    const positions: Position[] = dbPortfolio.positions
+      ? (Array.isArray(dbPortfolio.positions) ? dbPortfolio.positions as unknown as Position[] : [])
       : [];
 
     const portfolio: Portfolio = {

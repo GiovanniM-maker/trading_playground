@@ -54,10 +54,11 @@ export function logApiRequest(
   startTime?: number
 ): void {
   let path: string;
-  if (req instanceof Request) {
-    path = new URL(req.url).pathname;
-  } else {
+  // Type guard: check if it's a NextRequest by checking for nextUrl property
+  if ('nextUrl' in req && req.nextUrl) {
     path = req.nextUrl.pathname;
+  } else {
+    path = new URL(req.url).pathname;
   }
   const method = req.method;
   const latency = startTime ? Date.now() - startTime : undefined;
