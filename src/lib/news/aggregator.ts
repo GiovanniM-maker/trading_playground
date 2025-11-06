@@ -1,5 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { getCache, setCache } from '@/lib/redis';
+import { analyzeSentiment } from '@/lib/sentiment';
+import { COINS } from '@/lib/market/config';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -21,6 +23,19 @@ export interface AggregatedNewsArticle {
   link: string;
   published: string;
   description: string;
+  sentiment?: {
+    label: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'neutral' | 'positive' | 'negative';
+    confidence: number;
+  };
+  coins?: string[];
+}
+
+export interface SentimentPerCoin {
+  [coin: string]: {
+    avg: number;
+    count: number;
+    updated: string;
+  };
 }
 
 const SOURCES = [
@@ -124,5 +139,120 @@ export async function fetchCryptoNews(force = false): Promise<AggregatedNewsArti
   }
 
   return recent;
+}
+
+const COIN_KEYWORDS: Record<string, string[]> = {
+  BTC: ['bitcoin', 'btc'],
+  ETH: ['ethereum', 'eth'],
+  SOL: ['solana', 'sol'],
+  BNB: ['binance', 'bnb', 'binance coin'],
+  DOGE: ['dogecoin', 'doge'],
+  XRP: ['ripple', 'xrp'],
+};
+
+function detectCoins(text: string): string[] {
+  const lowerText = text.toLowerCase();
+  const detected: string[] = [];
+
+  for (const coin of COINS) {
+    const keywords = COIN_KEYWORDS[coin.symbol] || [coin.symbol.toLowerCase()];
+    const isMentioned = keywords.some(keyword => lowerText.includes(keyword));
+    
+    if (isMentioned) {
+      detected.push(coin.symbol);
+    }
+  }
+
+  return detected;
+}
+
+export async function fetchCryptoNewsWithSentiment(force = false): Promise<{
+  articles: AggregatedNewsArticle[];
+  sentimentPerCoin: SentimentPerCoin;
+}> {
+  const articles = await fetchCryptoNews(force);
+  
+  // Analyze sentiment for each article
+  const articlesWithSentiment: AggregatedNewsArticle[] = [];
+  const perCoin: Record<string, { total: number; score: number }> = {};
+
+  for (const article of articles) {
+    const text = `${article.title} ${article.description}`;
+    
+    // Analyze sentiment
+    let sentiment;
+    try {
+      const result = await analyzeSentiment(text);
+      sentiment = {
+        label: result.label.toUpperCase() as 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL',
+        confidence: result.confidence || 0.5,
+      };
+    } catch (error) {
+      console.error('Error analyzing sentiment:', error);
+      sentiment = { label: 'NEUTRAL' as const, confidence: 0.5 };
+    }
+
+    // Detect coins mentioned
+    const coins = detectCoins(text);
+    
+    const articleWithSentiment: AggregatedNewsArticle = {
+      ...article,
+      sentiment,
+      coins,
+    };
+
+    articlesWithSentiment.push(articleWithSentiment);
+
+    // Aggregate sentiment per coin
+    if (coins.length > 0) {
+      for (const coin of coins) {
+        if (!perCoin[coin]) {
+          perCoin[coin] = { total: 0, score: 0 };
+        }
+
+        // Convert sentiment to polarity score
+        // POSITIVE = +1, NEGATIVE = -1, NEUTRAL = 0
+        const label = sentiment.label.toUpperCase();
+        const polarity =
+          label === 'POSITIVE' ? 1 :
+          label === 'NEGATIVE' ? -1 : 0;
+
+        perCoin[coin].total += 1;
+        // Weight by confidence
+        perCoin[coin].score += polarity * sentiment.confidence;
+      }
+    }
+  }
+
+  // Compute average sentiment per coin
+  const sentimentPerCoin: SentimentPerCoin = {};
+  for (const [coin, data] of Object.entries(perCoin)) {
+    sentimentPerCoin[coin] = {
+      avg: data.total > 0 ? data.score / data.total : 0,
+      count: data.total,
+      updated: new Date().toISOString(),
+    };
+  }
+
+  // Store in Redis for dashboard and market integration (12 hours TTL)
+  if (Object.keys(sentimentPerCoin).length > 0) {
+    await setCache('sentiment:perCoin', sentimentPerCoin, 43200);
+    
+    // Also store daily history
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [coin, data] of Object.entries(sentimentPerCoin)) {
+      const historyKey = `sentiment:history:${coin}`;
+      const history = await getCache(historyKey) || {};
+      if (typeof history === 'object') {
+        history[today] = data.avg;
+        await setCache(historyKey, history, 86400 * 30); // 30 days
+      }
+    }
+  }
+
+  return {
+    articles: articlesWithSentiment,
+    sentimentPerCoin,
+  };
 }
 

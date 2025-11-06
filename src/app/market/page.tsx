@@ -58,6 +58,8 @@ export default function MarketPage() {
   const [historyData, setHistoryData] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [newsSidebarOpen, setNewsSidebarOpen] = useState(true);
+  const [sentimentPerCoin, setSentimentPerCoin] = useState<Record<string, { avg: number; count: number; updated: string }>>({});
+  const [showSentiment, setShowSentiment] = useState(true);
 
   const fetchMarketData = async () => {
     try {
@@ -72,8 +74,27 @@ export default function MarketPage() {
   };
 
   const fetchNews = async () => {
-    // News API disabled
-    setNews([]);
+    try {
+      const response = await fetch('/api/news');
+      if (!response.ok) throw new Error('Failed to fetch news');
+      
+      const data = await response.json();
+      setNews((data.articles || []).slice(0, 10).map((item: any) => ({
+        title: item.title,
+        url: item.link,
+        source: item.source || 'Unknown',
+        sentiment: item.sentiment?.label === 'POSITIVE' ? 'Bullish' : item.sentiment?.label === 'NEGATIVE' ? 'Bearish' : 'Neutral',
+        published_at: item.published || new Date().toISOString(),
+      })));
+      
+      // Update sentiment per coin
+      if (data.sentimentPerCoin) {
+        setSentimentPerCoin(data.sentimentPerCoin);
+      }
+    } catch (error) {
+      console.error('Error fetching news:', error);
+      setNews([]);
+    }
   };
 
   const fetchHistory = async (range: string = timeRange) => {
@@ -108,8 +129,11 @@ export default function MarketPage() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await fetchMarketData();
-      await fetchHistory('all'); // Load full history initially
+      await Promise.all([
+        fetchMarketData(),
+        fetchHistory('all'), // Load full history initially
+        fetchNews(),
+      ]);
       setLoading(false);
     };
 
@@ -118,6 +142,7 @@ export default function MarketPage() {
     // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
       fetchMarketData();
+      fetchNews();
     }, 30000);
 
     return () => clearInterval(interval);
@@ -153,6 +178,9 @@ export default function MarketPage() {
 
       // Use fused history data if available, otherwise fall back to marketData history
       // Ensure data is sorted by timestamp ascending
+      const currentSentiment = sentimentPerCoin[selectedCoin.symbol];
+      const sentimentValue = currentSentiment ? currentSentiment.avg : 0;
+      
       const chartData = historyData
         ? historyData.points
             .sort((a, b) => a.t - b.t) // Ensure ascending order
@@ -160,6 +188,7 @@ export default function MarketPage() {
               time: new Date(p.t).toISOString(),
               price: Math.round(p.p * 100) / 100, // Round to 2 decimals
               confidence: p.c,
+              sentiment: sentimentValue, // Add sentiment value for correlation
             }))
         : (marketData?.history || [])
             .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
@@ -167,6 +196,7 @@ export default function MarketPage() {
               time: p.time,
               price: Math.round((p.price || 0) * 100) / 100, // Round to 2 decimals
               confidence: 1,
+              sentiment: sentimentValue, // Add sentiment value for correlation
             }));
 
   const getConfidenceColor = (confidence: number) => {
@@ -295,7 +325,26 @@ export default function MarketPage() {
                       </>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowSentiment(!showSentiment)}
+                      className={cn(
+                        "px-3 py-1 text-xs font-medium transition-colors border border-[#222]",
+                        showSentiment
+                          ? "bg-[#181818] text-[#00b686] border-[#00b686]/30"
+                          : "bg-[#141414] text-[#a9a9a9] hover:text-[#f5f5e8] hover:border-[#3a3a3a]"
+                      )}
+                    >
+                      {showSentiment ? '✓ Sentiment' : 'Sentiment'}
+                    </button>
+                    {sentimentPerCoin[selectedCoin.symbol] && (
+                      <span className={cn(
+                        "px-2 py-1 text-xs font-medium",
+                        sentimentPerCoin[selectedCoin.symbol].avg > 0 ? "text-[#00b686]" : sentimentPerCoin[selectedCoin.symbol].avg < 0 ? "text-[#ff4d4d]" : "text-[#a9a9a9]"
+                      )}>
+                        {sentimentPerCoin[selectedCoin.symbol].avg > 0 ? '+' : ''}{sentimentPerCoin[selectedCoin.symbol].avg.toFixed(2)} ({sentimentPerCoin[selectedCoin.symbol].count} articles)
+                      </span>
+                    )}
                     {(['24h', '7d', '30d', '90d', '1y', '5y', 'all'] as const).map((range) => (
                       <button
                         key={range}
@@ -372,6 +421,28 @@ export default function MarketPage() {
                           dot={false}
                           isAnimationActive={true}
                         />
+                        {showSentiment && sentimentPerCoin[selectedCoin.symbol] && (
+                          <>
+                            <YAxis 
+                              yAxisId="sentiment"
+                              orientation="right"
+                              stroke="#22c55e"
+                              tick={{ fill: '#22c55e', fontSize: 10 }}
+                              domain={[-1, 1]}
+                              tickFormatter={(value) => value.toFixed(1)}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sentiment"
+                              stroke="#22c55e"
+                              strokeDasharray="4 2"
+                              strokeWidth={1.5}
+                              yAxisId="sentiment"
+                              dot={false}
+                              isAnimationActive={true}
+                            />
+                          </>
+                        )}
                       </LineChart>
                     </ResponsiveContainer>
                   )}

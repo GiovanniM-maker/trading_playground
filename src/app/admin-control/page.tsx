@@ -25,6 +25,8 @@ export default function AdminControlRoomPage() {
   const [lastChecked, setLastChecked] = useState<Date>(new Date());
   const [selectedServiceForLogs, setSelectedServiceForLogs] = useState<string | null>(null);
   const [uptime, setUptime] = useState(0);
+  const [sentimentPerCoin, setSentimentPerCoin] = useState<Record<string, { avg: number; count: number; updated: string }>>({});
+  const [selectedCoinForNews, setSelectedCoinForNews] = useState<string | null>(null);
 
   const updateLatencyHistory = useCallback((result: HealthCheckResult) => {
     setLatencyHistory(prev => {
@@ -75,14 +77,28 @@ export default function AdminControlRoomPage() {
     }
   }, []);
 
+  const fetchSentimentData = useCallback(async () => {
+    try {
+      const response = await fetch('/api/news');
+      if (!response.ok) throw new Error('Failed to fetch sentiment data');
+      
+      const data = await response.json();
+      if (data.sentimentPerCoin) {
+        setSentimentPerCoin(data.sentimentPerCoin);
+      }
+    } catch (error) {
+      console.error('Error fetching sentiment data:', error);
+    }
+  }, []);
+
   const runAllChecks = useCallback(async () => {
     setLoading(true);
     try {
-      await Promise.all([runHealthChecks(), fetchControlStatus()]);
+      await Promise.all([runHealthChecks(), fetchControlStatus(), fetchSentimentData()]);
     } finally {
       setLoading(false);
     }
-  }, [runHealthChecks, fetchControlStatus]);
+  }, [runHealthChecks, fetchControlStatus, fetchSentimentData]);
 
   const retryCheck = useCallback(async (serviceName: string) => {
     const serviceMap: Record<string, string> = {
@@ -347,6 +363,53 @@ export default function AdminControlRoomPage() {
           <TradingLoopControl />
         </div>
 
+        {/* Sentiment Overview */}
+        {Object.keys(sentimentPerCoin).length > 0 && (
+          <div className="mb-6 bg-[#181818] border border-[#222] p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-[#f5f5e8] uppercase tracking-wide">
+                🧠 Sentiment Overview
+              </h2>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'].map((coin) => {
+                const sentiment = sentimentPerCoin[coin];
+                if (!sentiment) return null;
+                
+                const isPositive = sentiment.avg > 0;
+                const isNegative = sentiment.avg < 0;
+                const isNeutral = sentiment.avg === 0;
+                
+                return (
+                  <button
+                    key={coin}
+                    onClick={() => setSelectedCoinForNews(coin)}
+                    className={cn(
+                      "p-3 border rounded-lg transition-all hover:border-[#3a3a3a] text-left",
+                      isPositive ? "border-[#00b686]/50 bg-[#00b686]/5" :
+                      isNegative ? "border-[#ff4d4d]/50 bg-[#ff4d4d]/5" :
+                      "border-[#222] bg-[#141414]"
+                    )}
+                  >
+                    <div className="font-semibold text-[#f5f5e8] mb-1">{coin}</div>
+                    <div className={cn(
+                      "text-sm font-bold",
+                      isPositive ? "text-[#00b686]" :
+                      isNegative ? "text-[#ff4d4d]" :
+                      "text-[#a9a9a9]"
+                    )}>
+                      {isPositive ? '+' : ''}{sentiment.avg.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-[#a9a9a9] mt-1">
+                      ({sentiment.count} articles)
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* History Store */}
         <div className="mb-6">
           <HistoryPanel />
@@ -467,6 +530,40 @@ export default function AdminControlRoomPage() {
           isOpen={!!selectedServiceForLogs}
           onClose={() => setSelectedServiceForLogs(null)}
         />
+      )}
+
+      {/* Coin News Modal */}
+      {selectedCoinForNews && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setSelectedCoinForNews(null)}
+        >
+          <div
+            className="bg-[#0c0c0d] border border-[#222] rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-6 border-b border-[#222]">
+              <h2 className="text-xl font-semibold text-[#f5f5e8] uppercase tracking-wide">
+                {selectedCoinForNews} - Recent News
+              </h2>
+              <button
+                onClick={() => setSelectedCoinForNews(null)}
+                className="p-2 text-[#a9a9a9] hover:text-[#f5f5e8] transition-colors"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="text-sm text-[#a9a9a9]">
+                News articles mentioning {selectedCoinForNews} will appear here.
+                <br />
+                <span className="text-xs mt-2 block">
+                  Feature coming soon - news articles will be filtered by coin.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
