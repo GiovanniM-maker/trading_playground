@@ -45,6 +45,62 @@ function normalizeToDay(timestamp: number): number {
   return date.getTime();
 }
 
+// Normalize timestamps: convert seconds to ms if needed, then round to UTC midnight
+function normalizeTimestamps(raw: RawPoint[]): RawPoint[] {
+  return raw
+    .map(r => ({
+      // Convert seconds to milliseconds if needed (< 1e10 means it's in seconds)
+      t: r.t < 1e10 ? r.t * 1000 : r.t,
+      p: r.p
+    }))
+    .map(r => ({
+      // Round each timestamp to midnight UTC
+      t: normalizeToDay(r.t),
+      p: r.p
+    }))
+    .filter(r => r.p > 0) // Remove invalid prices
+    .sort((a, b) => a.t - b.t);
+}
+
+// Calculate percentile (simple linear interpolation)
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  if (sorted.length === 1) return sorted[0];
+  
+  const index = (p / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  
+  if (lower === upper) return sorted[lower];
+  
+  const weight = index - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+// Sanitize series by removing outliers using Median Absolute Deviation (MAD)
+function sanitizeSeries(series: RawPoint[]): RawPoint[] {
+  if (series.length === 0) return [];
+  
+  const prices = series.map(s => s.p).filter(p => p > 0);
+  if (prices.length === 0) return [];
+  
+  // Sort prices for percentile calculation
+  const sortedPrices = [...prices].sort((a, b) => a - b);
+  const median = percentile(sortedPrices, 50);
+  
+  // Calculate MAD (Median Absolute Deviation)
+  const deviations = prices.map(p => Math.abs(p - median));
+  const sortedDeviations = [...deviations].sort((a, b) => a - b);
+  const mad = percentile(sortedDeviations, 50);
+  
+  // Use 6 * MAD as threshold (more conservative than 3-sigma)
+  const threshold = 6 * mad;
+  const min = median - threshold;
+  const max = median + threshold;
+  
+  return series.filter(s => s.p >= min && s.p <= max && s.p > 0);
+}
+
 // Fetch from CoinGecko
 export async function fetchGeckoHistory(id: string): Promise<RawPoint[]> {
   try {
@@ -95,10 +151,13 @@ export async function fetchCompareHistory(symbol: string): Promise<RawPoint[]> {
       throw new Error('Invalid CryptoCompare response');
     }
 
-    return data.Data.Data.map((item: any) => ({
-      t: normalizeToDay(item.time * 1000), // Convert seconds to ms
-      p: Math.round(item.close * 100) / 100,
-    }));
+    // CryptoCompare returns timestamps in seconds, normalizeTimestamps will convert to ms
+    return normalizeTimestamps(
+      data.Data.Data.map((item: any) => ({
+        t: item.time, // Will be converted to ms by normalizeTimestamps
+        p: Math.round(item.close * 100) / 100,
+      }))
+    );
   } catch (error) {
     console.error(`Error fetching CryptoCompare history for ${symbol}:`, error);
     throw error;
@@ -125,10 +184,13 @@ export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null
     const data = await response.json();
     if (!Array.isArray(data)) return null;
 
-    return data.map((item: any) => ({
-      t: normalizeToDay(new Date(item.timestamp).getTime()),
-      p: Math.round(item.price * 100) / 100,
-    }));
+    // CoinPaprika returns ISO timestamps, normalize them
+    return normalizeTimestamps(
+      data.map((item: any) => ({
+        t: new Date(item.timestamp).getTime(), // Convert ISO to ms
+        p: Math.round(item.price * 100) / 100,
+      }))
+    );
   } catch (error) {
     console.warn(`CoinPaprika history fetch failed for ${id}:`, error);
     return null; // Silently ignore
@@ -137,12 +199,16 @@ export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null
 
 // Normalize and deduplicate by day
 function normalizeSeries(points: RawPoint[]): RawPoint[] {
-  const byDay = new Map<number, number>();
+  // First normalize timestamps
+  const normalized = normalizeTimestamps(points);
   
-  for (const point of points) {
-    const day = normalizeToDay(point.t);
-    // Keep the last price of the day
-    byDay.set(day, point.p);
+  // Then sanitize outliers
+  const sanitized = sanitizeSeries(normalized);
+  
+  // Deduplicate by day (keep last price of the day)
+  const byDay = new Map<number, number>();
+  for (const point of sanitized) {
+    byDay.set(point.t, point.p);
   }
 
   return Array.from(byDay.entries())
@@ -150,7 +216,7 @@ function normalizeSeries(points: RawPoint[]): RawPoint[] {
     .sort((a, b) => a.t - b.t);
 }
 
-// Fuse multiple sources
+// Fuse multiple sources with CoinGecko as primary reference
 export function fuseSources(
   sources: Array<{ name: string; points: RawPoint[] }>
 ): FusedSeries {
@@ -159,47 +225,118 @@ export function fuseSources(
     throw new Error('No valid sources provided');
   }
 
-  // Normalize all sources
+  // Normalize all sources (timestamp normalization + sanitization)
   const normalized = validSources.map(s => ({
     name: s.name,
     points: normalizeSeries(s.points),
   }));
 
-  // Create union of all dates
+  // Find CoinGecko as primary source
+  const geckoSource = normalized.find(s => s.name === 'CoinGecko');
+  if (!geckoSource || geckoSource.points.length === 0) {
+    // Fallback: if no CoinGecko, use first available source
+    const fallback = normalized[0];
+    const fused: FusedPoint[] = fallback.points.map(p => ({
+      t: p.t,
+      p: p.p,
+      c: 0.85, // Default confidence for single source
+    }));
+
+    const checksum = createHash('sha256')
+      .update(JSON.stringify(fused))
+      .digest('hex');
+
+    return {
+      symbol: '',
+      from: fused[0].t,
+      to: fused[fused.length - 1].t,
+      points: fused,
+      sources_used: [fallback.name],
+      confidence: 0.85,
+      version: 1,
+      checksum: checksum.substring(0, 16),
+    };
+  }
+
+  // Create a map of CoinGecko prices by date for quick lookup
+  const geckoPrices = new Map<number, number>();
+  for (const point of geckoSource.points) {
+    geckoPrices.set(point.t, point.p);
+  }
+
+  // Create union of all dates (but prioritize CoinGecko dates)
   const allDates = new Set<number>();
+  for (const point of geckoSource.points) {
+    allDates.add(point.t);
+  }
+  // Add dates from other sources only if they're close to CoinGecko dates
   for (const source of normalized) {
+    if (source.name === 'CoinGecko') continue;
     for (const point of source.points) {
-      allDates.add(point.t);
+      // Only include if we have CoinGecko data for this date or nearby dates
+      if (geckoPrices.has(point.t)) {
+        allDates.add(point.t);
+      }
     }
   }
 
   const sortedDates = Array.from(allDates).sort((a, b) => a - b);
 
-  // Align and fuse
+  // Align and fuse with weighted logic
   const fused: FusedPoint[] = [];
   let totalConfidence = 0;
 
   for (const date of sortedDates) {
-    const prices: number[] = [];
+    const geckoVal = geckoPrices.get(date);
     
+    // Collect prices from all sources, filtering by ±10% of CoinGecko
+    const validPrices: Array<{ source: string; price: number }> = [];
+    
+    if (geckoVal) {
+      validPrices.push({ source: 'CoinGecko', price: geckoVal });
+    }
+
     for (const source of normalized) {
+      if (source.name === 'CoinGecko') continue;
+      
       const point = source.points.find(p => p.t === date);
       if (point) {
-        prices.push(point.p);
+        // Only include if within ±10% of CoinGecko (or if no CoinGecko, include all)
+        if (geckoVal) {
+          const diff = Math.abs(point.p - geckoVal) / geckoVal;
+          if (diff < 0.1) {
+            validPrices.push({ source: source.name, price: point.p });
+          }
+        } else {
+          // If no CoinGecko for this date, include this source
+          validPrices.push({ source: source.name, price: point.p });
+        }
       }
     }
 
-    if (prices.length === 0) continue;
+    if (validPrices.length === 0) continue;
 
-    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+    // Calculate weighted average (CoinGecko has weight 1.0, others 0.5)
+    let weightedSum = 0;
+    let totalWeight = 0;
+    
+    for (const { source, price } of validPrices) {
+      const weight = source === 'CoinGecko' ? 1.0 : 0.5;
+      weightedSum += price * weight;
+      totalWeight += weight;
+    }
+
+    const avg = weightedSum / totalWeight;
     
     // Calculate point confidence
     let pointConfidence: number;
-    if (prices.length === 1) {
+    if (validPrices.length === 1) {
       pointConfidence = 0.85; // Default for single source
     } else {
+      const prices = validPrices.map(v => v.price);
       const variance = prices.reduce((sum, p) => sum + Math.pow(p - avg, 2), 0) / prices.length;
       const stdev = Math.sqrt(variance);
+      // Confidence based on coefficient of variation, clamped to [0, 1]
       pointConfidence = Math.max(0, Math.min(1, 1 - (stdev / avg)));
     }
 
@@ -218,13 +355,15 @@ export function fuseSources(
     .update(JSON.stringify(fused))
     .digest('hex');
 
-  // Symbol will be set by the caller
+  // Collect sources used
+  const sourcesUsed = Array.from(new Set(validSources.map(s => s.name)));
+
   return {
     symbol: '', // Will be overwritten by caller
     from: sortedDates[0],
     to: sortedDates[sortedDates.length - 1],
     points: fused,
-    sources_used: validSources.map(s => s.name),
+    sources_used: sourcesUsed,
     confidence: Math.round(globalConfidence * 1000) / 1000,
     version: 1,
     checksum: checksum.substring(0, 16), // Short checksum
