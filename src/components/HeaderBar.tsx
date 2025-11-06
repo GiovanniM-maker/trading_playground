@@ -15,6 +15,7 @@ const navLinks = [
   { href: '/market', label: '💹 Market' },
   { href: '/news', label: '📰 News' },
   { href: '/portfolio', label: '💼 Portfolio' },
+  { href: '/admin', label: '🧩 Admin' },
 ];
 
 export function HeaderBar() {
