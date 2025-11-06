@@ -13,8 +13,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ service, onClose }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<'logs' | 'details' | 'json'>('logs');
+  const [activeTab, setActiveTab] = useState<'logs' | 'details' | 'json' | 'fallbacks'>('logs');
   const [logs, setLogs] = useState(service?.logs || []);
+  const [fallbacks, setFallbacks] = useState<Array<{ timestamp: string; cause: string }>>([]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -39,7 +40,23 @@ export function Sidebar({ service, onClose }: SidebarProps) {
         }
       };
 
+      // Fetch fallback logs for Sentiment System
+      const fetchFallbacks = async () => {
+        if (service.name === 'Sentiment System' || service.name === 'Hugging Face') {
+          try {
+            const response = await fetch('/api/control/sentiment-fallbacks');
+            if (response.ok) {
+              const data = await response.json();
+              setFallbacks(data.fallbacks || []);
+            }
+          } catch (error) {
+            console.error('Error fetching fallbacks:', error);
+          }
+        }
+      };
+
       fetchLogs();
+      fetchFallbacks();
       
       return () => {
         document.removeEventListener('keydown', handleEscape);
@@ -124,19 +141,22 @@ export function Sidebar({ service, onClose }: SidebarProps) {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-[#222] bg-[#141414] flex-shrink-0">
-              {(['logs', 'details', 'json'] as const).map((tab) => (
+            <div className="flex border-b border-[#222] bg-[#141414] flex-shrink-0 overflow-x-auto">
+              {(['logs', 'details', 'json', ...(service.name === 'Sentiment System' || service.name === 'Hugging Face' ? ['fallbacks'] : [])] as const).map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => setActiveTab(tab as typeof activeTab)}
                   className={cn(
-                    "flex-1 px-4 py-3 text-sm font-medium transition-colors capitalize",
+                    "px-4 py-3 text-sm font-medium transition-colors capitalize whitespace-nowrap",
                     activeTab === tab
                       ? "text-[#f5f5e8] border-b-2 border-[#00b686] bg-[#181818]"
                       : "text-[#a9a9a9] hover:text-[#f5f5e8] hover:bg-[#181818]"
                   )}
                 >
                   {tab}
+                  {tab === 'fallbacks' && fallbacks.length > 0 && (
+                    <span className="ml-1 text-xs text-yellow-500">({fallbacks.length})</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -232,6 +252,49 @@ export function Sidebar({ service, onClose }: SidebarProps) {
                   ) : (
                     <div className="text-center py-8 text-[#a9a9a9]">
                       <p>No JSON response data</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'fallbacks' && (
+                <div>
+                  <h3 className="text-sm font-semibold text-[#f5f5e8] mb-3">
+                    Sentiment Fallback Logs (Last {fallbacks.length})
+                  </h3>
+                  {fallbacks.length > 0 ? (
+                    <div className="space-y-2">
+                      {fallbacks.map((fallback, index) => {
+                        const timestamp = new Date(fallback.timestamp);
+                        const isRecent = Date.now() - timestamp.getTime() < 24 * 60 * 60 * 1000; // Last 24h
+                        
+                        return (
+                          <div
+                            key={index}
+                            className={cn(
+                              "p-3 bg-[#0c0c0d] border rounded text-xs",
+                              isRecent ? "border-yellow-500/50 bg-yellow-500/5" : "border-[#222]"
+                            )}
+                          >
+                            <div className="flex items-start justify-between mb-1">
+                              <span className={cn("font-medium", isRecent ? "text-yellow-500" : "text-[#f5f5e8]")}>
+                                {timestamp.toLocaleString()}
+                              </span>
+                              {isRecent && (
+                                <span className="text-yellow-500 text-xs">Last 24h</span>
+                              )}
+                            </div>
+                            <div className="text-[#a9a9a9]">
+                              Cause: <span className="text-[#f5f5e8]">{fallback.cause}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-[#a9a9a9]">
+                      <p>No fallback events recorded</p>
+                      <p className="text-xs mt-2">Fallbacks occur when HuggingFace API fails (401, 404, 410)</p>
                     </div>
                   )}
                 </div>

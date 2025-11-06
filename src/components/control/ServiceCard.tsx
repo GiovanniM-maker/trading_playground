@@ -153,6 +153,45 @@ export function ServiceCard({
             </span>
           </div>
         )}
+        {name === 'News System' && json?.count !== undefined && (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[#a9a9a9]">Articles:</span>
+              <span className={cn(
+                "text-xs font-medium",
+                json.count > 0 ? "text-[#00b686]" : "text-[#ff4d4d]"
+              )}>
+                {json.count}
+              </span>
+            </div>
+            {json.lastUpdate && (
+              <div className="flex items-center justify-between">
+                <span className="text-[#a9a9a9]">Last Update:</span>
+                <span className="text-[#f5f5e8] text-xs truncate" title={json.lastUpdate}>
+                  {formatTime(json.lastUpdate)}
+                </span>
+              </div>
+            )}
+            {json.cached !== undefined && (
+              <div className="flex items-center justify-between pt-2 border-t border-[#222]">
+                <span className="text-[#a9a9a9] text-xs">Status:</span>
+                <span className="text-xs flex items-center gap-1">
+                  {json.cached ? (
+                    <>
+                      <span>⚠️</span>
+                      <span className="text-yellow-500">Cached</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>✅</span>
+                      <span className="text-[#00b686]">Live</span>
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+          </>
+        )}
         {json?.model && (
           <div className="flex items-center justify-between">
             <span className="text-[#a9a9a9]">Model:</span>
@@ -174,6 +213,31 @@ export function ServiceCard({
             <span className="text-[#a9a9a9]">Model:</span>
             <span className="text-[#f5f5e8] text-xs truncate" title={json.model}>
               {json.model}
+            </span>
+          </div>
+        )}
+        {isSentimentSystem && json?.source && (
+          <div className="flex items-center justify-between pt-2 border-t border-[#222]">
+            <span className="text-[#a9a9a9] text-xs">Source:</span>
+            <span className="text-xs flex items-center gap-1">
+              {json.source === 'huggingface' && (
+                <>
+                  <span>✅</span>
+                  <span className="text-[#00b686]">Online (HuggingFace)</span>
+                </>
+              )}
+              {json.source === 'cached' && (
+                <>
+                  <span>🕓</span>
+                  <span className="text-yellow-500">Using Cached Sentiment</span>
+                </>
+              )}
+              {json.source === 'local-fallback' && (
+                <>
+                  <span>⚠️</span>
+                  <span className="text-yellow-500">Fallback (Local)</span>
+                </>
+              )}
             </span>
           </div>
         )}

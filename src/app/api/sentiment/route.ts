@@ -21,21 +21,9 @@ export async function POST(req: Request) {
     // Single call to analyzeSentiment
     const result = await analyzeSentiment(trimmedText);
 
-    // Convert label format for API response
-    const label = result.label === 'POSITIVE' 
-      ? 'positive' 
-      : result.label === 'NEGATIVE'
-      ? 'negative'
-      : 'neutral';
-
     return NextResponse.json({
-      label,
-      score: result.score,
-      model: result.model || 'unknown',
-      latency_ms: result.latency_ms || 0,
+      ...result,
       timestamp: new Date().toISOString(),
-      ...(result.error && { error: result.error }),
-      ...(result.disabled && { disabled: true }),
     });
   } catch (error) {
     console.error('Error in sentiment API:', error);

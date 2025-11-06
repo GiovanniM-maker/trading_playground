@@ -597,12 +597,88 @@ export async function checkGitHub(): Promise<HealthCheckResult> {
   }
 }
 
+export async function checkNewsAggregator(baseUrl: string = ''): Promise<HealthCheckResult> {
+  const startTime = Date.now();
+  try {
+    const url = baseUrl ? `${baseUrl}/api/news` : '/api/news';
+    const response = await fetchWithTimeout(url, {}, 8000);
+
+    const latency = Date.now() - startTime;
+
+    if (!response.ok) {
+      const errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      const { logError } = await import('./errors/logs');
+      await logError('News System', errorMessage, response.status);
+      
+      return {
+        service: 'News System',
+        status: 'error',
+        latency,
+        message: errorMessage,
+        timestamp: Date.now(),
+      };
+    }
+
+    const data = await response.json();
+    const articleCount = data.count || 0;
+    const isCached = data.cached === true;
+    const lastUpdate = data.timestamp ? new Date(data.timestamp).toISOString() : undefined;
+
+    // Determine status based on article count and cache status
+    // ✅ green when articles > 0
+    // ⚠️ yellow when cached (but still has articles > 0)
+    // 🔴 red if fetch fails or no articles
+    let status: 'ok' | 'warning' | 'error' = 'ok';
+    let message = '';
+    
+    if (articleCount === 0) {
+      status = 'error';
+      message = 'No articles available';
+    } else if (isCached) {
+      status = 'warning';
+      message = `Cached - ${articleCount} articles (last updated: ${lastUpdate ? new Date(lastUpdate).toLocaleString() : 'unknown'})`;
+    } else {
+      status = 'ok';
+      message = `Live - ${articleCount} articles`;
+    }
+
+    return {
+      service: 'News System',
+      status,
+      latency,
+      message,
+      timestamp: Date.now(),
+      details: {
+        count: articleCount,
+        cached: isCached,
+        lastUpdate,
+      },
+    };
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('News System', errorMessage);
+    
+    return {
+      service: 'News System',
+      status: 'error',
+      latency,
+      message: errorMessage,
+      timestamp: Date.now(),
+    };
+  }
+}
+
 export async function runAllChecks(baseUrl: string = ''): Promise<HealthCheckResult[]> {
   const checks = [
     checkRedis(),
     checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
+    checkNewsAggregator(baseUrl),
     checkRedisLatency(),
     Promise.resolve(checkVercelEnv()),
     checkGitHub(),

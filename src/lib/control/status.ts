@@ -1,4 +1,4 @@
-import { checkRedis, checkLocalNews, checkHuggingFace, checkMarketAPI, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
+import { checkRedis, checkLocalNews, checkHuggingFace, checkMarketAPI, checkNewsAggregator, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
 import { logEvent, LogEntry } from './logs';
 
 export interface ServiceStatus {
@@ -189,6 +189,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     localNews,
     huggingface,
     market,
+    newsAggregator,
     vercelEnv,
     github,
   ] = await Promise.allSettled([
@@ -201,6 +202,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
+    checkNewsAggregator(baseUrl),
     checkVercelEnv(),
     checkGitHub(),
   ]);
@@ -241,6 +243,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
       json: {
         ...result.json,
         model: result.json?.model || process.env.HF_MODEL || 'kk08/CryptoBERT',
+        source: result.json?.source || 'unknown', // Include source from sentiment API response
       },
       error: result.error,
       lastUpdate: result.lastUpdate,
@@ -275,6 +278,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     { name: 'Redis Latency', result: redisLatency.status === 'fulfilled' ? redisLatency.value : null },
     { name: 'Local News', result: localNews.status === 'fulfilled' ? localNews.value : null },
     { name: 'Market API', result: market.status === 'fulfilled' ? market.value : null },
+    { name: 'News System', result: newsAggregator.status === 'fulfilled' ? newsAggregator.value : null },
     { name: 'Vercel Environment', result: vercelEnv.status === 'fulfilled' ? vercelEnv.value : null },
     { name: 'GitHub Sync', result: github.status === 'fulfilled' ? github.value : null },
   ];
@@ -290,6 +294,7 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
         code: undefined,
         error: result.status !== 'ok' ? result.message : undefined,
         lastUpdate: new Date(result.timestamp).toISOString(),
+        json: result.details || {}, // Include details for News System (count, cached, lastUpdate)
       };
 
       // Log the event
