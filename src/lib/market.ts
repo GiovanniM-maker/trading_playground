@@ -61,9 +61,12 @@ async function fetchPaprika(symbol: string): Promise<SourceData> {
   if (!response.ok) throw new Error('paprika');
 
   const data = await response.json();
+  // CoinPaprika provides quotes.USD.price - ensure we use USD
+  const priceUSD = data.quotes?.USD?.price || data.price || 0;
+  
   return {
     source: 'CoinPaprika',
-    price: data.quotes?.USD?.price || 0,
+    price: priceUSD,
     change_24h: data.quotes?.USD?.percent_change_24h || null,
     market_cap: data.quotes?.USD?.market_cap || null,
     volume_24h: data.quotes?.USD?.volume_24h || null,
@@ -85,9 +88,12 @@ async function fetchBinance(symbol: string): Promise<SourceData> {
   if (!response.ok) throw new Error('binance');
 
   const data = await response.json();
+  // Binance returns price in USDT (pegged to USD, ~1:1), treat as USD
+  const priceUSDT = parseFloat(data.lastPrice) || 0;
+  
   return {
     source: 'Binance',
-    price: parseFloat(data.lastPrice) || 0,
+    price: priceUSDT, // USDT ≈ USD, no conversion needed for accuracy
     change_24h: parseFloat(data.priceChangePercent) || null,
     market_cap: null,
     volume_24h: parseFloat(data.quoteVolume) || null,

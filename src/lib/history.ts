@@ -38,28 +38,32 @@ export type FusedSeries = {
 
 type RawPoint = { t: number; p: number };
 
-// Normalize timestamp to UTC midnight
+// Import unified timestamp normalization
+import { normalizeTimestampUTC, ensureUSDPrice } from './utils/timestamp';
+
+// Normalize timestamp to UTC midnight (kept for backward compatibility)
 function normalizeToDay(timestamp: number): number {
-  const date = new Date(timestamp);
-  date.setUTCHours(0, 0, 0, 0);
-  return date.getTime();
+  return normalizeTimestampUTC(timestamp);
 }
 
 // Normalize timestamps: convert seconds to ms if needed, then round to UTC midnight
-function normalizeTimestamps(raw: RawPoint[]): RawPoint[] {
-  return raw
-    .map(r => ({
-      // Convert seconds to milliseconds if needed (< 1e10 means it's in seconds)
-      t: r.t < 1e10 ? r.t * 1000 : r.t,
-      p: r.p
-    }))
-    .map(r => ({
-      // Round each timestamp to midnight UTC
-      t: normalizeToDay(r.t),
-      p: r.p
-    }))
+async function normalizeTimestamps(raw: RawPoint[]): Promise<RawPoint[]> {
+  // Normalize timestamps and ensure USD prices
+  const normalized = await Promise.all(
+    raw.map(async (r) => {
+      const normalizedTs = normalizeTimestampUTC(r.t);
+      const usdPrice = await ensureUSDPrice(r.p, 'USD'); // Ensure USD
+      
+      return {
+        t: normalizedTs,
+        p: usdPrice,
+      };
+    })
+  );
+  
+  return normalized
     .filter(r => r.p > 0) // Remove invalid prices
-    .sort((a, b) => a.t - b.t);
+    .sort((a, b) => a.t - b.t); // Ensure ascending order
 }
 
 // Calculate percentile (simple linear interpolation)
@@ -119,10 +123,23 @@ export async function fetchGeckoHistory(id: string): Promise<RawPoint[]> {
       throw new Error('Invalid CoinGecko response');
     }
 
-    return data.prices.map(([t, p]: [number, number]) => ({
-      t: normalizeToDay(t),
-      p: Math.round(p * 100) / 100,
-    }));
+    // CoinGecko returns timestamps in milliseconds and prices in USD
+    const normalized = await normalizeTimestamps(
+      data.prices.map(([t, p]: [number, number]) => ({
+        t,
+        p: Math.round(p * 100) / 100, // Round to 2 decimals
+      }))
+    );
+
+    // Verification logging
+    if (normalized.length > 0) {
+      const min = Math.min(...normalized.map(p => p.p));
+      const max = Math.max(...normalized.map(p => p.p));
+      const sample = normalized.slice(0, 3);
+      console.log(`[CoinGecko ${id}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+    }
+
+    return normalized;
   } catch (error) {
     console.error(`Error fetching CoinGecko history for ${id}:`, error);
     throw error;
@@ -132,6 +149,7 @@ export async function fetchGeckoHistory(id: string): Promise<RawPoint[]> {
 // Fetch from CryptoCompare
 export async function fetchCompareHistory(symbol: string): Promise<RawPoint[]> {
   try {
+    // Ensure tsym=USD for USD prices
     const response = await fetch(
       `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&allData=true`,
       {
@@ -151,13 +169,23 @@ export async function fetchCompareHistory(symbol: string): Promise<RawPoint[]> {
       throw new Error('Invalid CryptoCompare response');
     }
 
-    // CryptoCompare returns timestamps in seconds, normalizeTimestamps will convert to ms
-    return normalizeTimestamps(
+    // CryptoCompare returns timestamps in seconds and prices in USD
+    const normalized = await normalizeTimestamps(
       data.Data.Data.map((item: any) => ({
         t: item.time, // Will be converted to ms by normalizeTimestamps
-        p: Math.round(item.close * 100) / 100,
+        p: Math.round(item.close * 100) / 100, // Round to 2 decimals, already in USD
       }))
     );
+
+    // Verification logging
+    if (normalized.length > 0) {
+      const min = Math.min(...normalized.map(p => p.p));
+      const max = Math.max(...normalized.map(p => p.p));
+      const sample = normalized.slice(0, 3);
+      console.log(`[CryptoCompare ${symbol}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+    }
+
+    return normalized;
   } catch (error) {
     console.error(`Error fetching CryptoCompare history for ${symbol}:`, error);
     throw error;
@@ -184,13 +212,23 @@ export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null
     const data = await response.json();
     if (!Array.isArray(data)) return null;
 
-    // CoinPaprika returns ISO timestamps, normalize them
-    return normalizeTimestamps(
+    // CoinPaprika returns ISO timestamps and prices in USD (quotes.USD.price)
+    const normalized = await normalizeTimestamps(
       data.map((item: any) => ({
         t: new Date(item.timestamp).getTime(), // Convert ISO to ms
-        p: Math.round(item.price * 100) / 100,
+        p: Math.round((item.price || item.quotes?.USD?.price || 0) * 100) / 100, // Ensure USD price
       }))
     );
+
+    // Verification logging
+    if (normalized.length > 0) {
+      const min = Math.min(...normalized.map(p => p.p));
+      const max = Math.max(...normalized.map(p => p.p));
+      const sample = normalized.slice(0, 3);
+      console.log(`[CoinPaprika ${symbol}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+    }
+
+    return normalized;
   } catch (error) {
     console.warn(`CoinPaprika history fetch failed for ${id}:`, error);
     return null; // Silently ignore
@@ -198,9 +236,9 @@ export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null
 }
 
 // Normalize and deduplicate by day
-function normalizeSeries(points: RawPoint[]): RawPoint[] {
-  // First normalize timestamps
-  const normalized = normalizeTimestamps(points);
+async function normalizeSeries(points: RawPoint[]): Promise<RawPoint[]> {
+  // First normalize timestamps and ensure USD
+  const normalized = await normalizeTimestamps(points);
   
   // Then sanitize outliers
   const sanitized = sanitizeSeries(normalized);
@@ -211,25 +249,29 @@ function normalizeSeries(points: RawPoint[]): RawPoint[] {
     byDay.set(point.t, point.p);
   }
 
-  return Array.from(byDay.entries())
+  const result = Array.from(byDay.entries())
     .map(([t, p]) => ({ t, p }))
-    .sort((a, b) => a.t - b.t);
+    .sort((a, b) => a.t - b.t); // Ensure ascending order
+
+  return result;
 }
 
 // Fuse multiple sources with CoinGecko as primary reference
-export function fuseSources(
+export async function fuseSources(
   sources: Array<{ name: string; points: RawPoint[] }>
-): FusedSeries {
+): Promise<FusedSeries> {
   const validSources = sources.filter(s => s.points.length > 0);
   if (validSources.length === 0) {
     throw new Error('No valid sources provided');
   }
 
-  // Normalize all sources (timestamp normalization + sanitization)
-  const normalized = validSources.map(s => ({
-    name: s.name,
-    points: normalizeSeries(s.points),
-  }));
+  // Normalize all sources (timestamp normalization + sanitization + USD conversion)
+  const normalized = await Promise.all(
+    validSources.map(async (s) => ({
+      name: s.name,
+      points: await normalizeSeries(s.points),
+    }))
+  );
 
   // Find CoinGecko as primary source
   const geckoSource = normalized.find(s => s.name === 'CoinGecko');
@@ -349,6 +391,18 @@ export function fuseSources(
   }
 
   const globalConfidence = fused.length > 0 ? totalConfidence / fused.length : 0;
+
+  // Final verification: ensure sorted ascending
+  fused.sort((a, b) => a.t - b.t);
+
+  // Verification logging
+  if (fused.length > 0) {
+    const min = Math.min(...fused.map(p => p.p));
+    const max = Math.max(...fused.map(p => p.p));
+    const sample = fused.slice(0, 3);
+    const latest = fused[fused.length - 1];
+    console.log(`[Fused Series] Points: ${fused.length}, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, latest: $${latest.p.toFixed(2)} at ${new Date(latest.t).toISOString()}, sample:`, sample);
+  }
 
   // Calculate checksum
   const checksum = createHash('sha256')
@@ -542,8 +596,8 @@ export async function backfillSymbol(symbol: string, force = false): Promise<Fus
     throw new Error(`No sources available for ${symbol}`);
   }
 
-  // Fuse and save
-  const fused = fuseSources(sources);
+  // Fuse and save (now async)
+  const fused = await fuseSources(sources);
   fused.symbol = symbol; // Ensure correct symbol
   await saveHistory(symbol, fused);
 

@@ -54,7 +54,7 @@ export default function MarketPage() {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | '5y' | 'all'>('7d');
+  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | '5y' | 'all'>('30d');
   const [historyData, setHistoryData] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [newsSidebarOpen, setNewsSidebarOpen] = useState(true);
@@ -106,6 +106,12 @@ export default function MarketPage() {
       }
       
       const data = await response.json();
+      
+      // Ensure points are sorted ascending by timestamp
+      if (data.points && Array.isArray(data.points)) {
+        data.points.sort((a: HistoryPoint, b: HistoryPoint) => a.t - b.t);
+      }
+      
       setHistoryData(data);
     } catch (error) {
       console.error('Error fetching history:', error);
@@ -138,11 +144,9 @@ export default function MarketPage() {
 
   useEffect(() => {
     // Refetch history when range changes
-    if (historyData) {
-      fetchHistory(timeRange);
-    }
+    fetchHistory(timeRange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange]);
+  }, [timeRange, selectedCoin]);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -165,18 +169,23 @@ export default function MarketPage() {
     }
   };
 
-  // Use fused history data if available, otherwise fall back to marketData history
-  const chartData = historyData
-    ? historyData.points.map(p => ({
-        time: new Date(p.t).toISOString(),
-        price: p.p,
-        confidence: p.c,
-      }))
-    : (marketData?.history || []).map(p => ({
-        time: p.time,
-        price: p.price,
-        confidence: 1,
-      }));
+      // Use fused history data if available, otherwise fall back to marketData history
+      // Ensure data is sorted by timestamp ascending
+      const chartData = historyData
+        ? historyData.points
+            .sort((a, b) => a.t - b.t) // Ensure ascending order
+            .map(p => ({
+              time: new Date(p.t).toISOString(),
+              price: Math.round(p.p * 100) / 100, // Round to 2 decimals
+              confidence: p.c,
+            }))
+        : (marketData?.history || [])
+            .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+            .map(p => ({
+              time: p.time,
+              price: Math.round((p.price || 0) * 100) / 100, // Round to 2 decimals
+              confidence: 1,
+            }));
 
   const getConfidenceColor = (confidence: number) => {
     if (confidence >= 0.95) return 'bg-[#00b686]/20 text-[#00b686] border-[#00b686]/30';
@@ -352,20 +361,27 @@ export default function MarketPage() {
                           domain={['auto', 'auto']}
                           tickFormatter={(value) => `$${value.toLocaleString()}`}
                         />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: '#181818', 
-                            border: '1px solid #222',
-                            borderRadius: '4px',
-                            color: '#f5f5e8'
-                          }}
-                          formatter={(value: number, name: string, props: any) => {
-                            const conf = props.payload?.confidence;
-                            const confText = conf !== undefined ? ` (Conf: ${(conf * 100).toFixed(1)}%)` : '';
-                            return [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${confText}`, 'Price'];
-                          }}
-                          labelFormatter={(label) => new Date(label).toLocaleString()}
-                        />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: '#181818', 
+                              border: '1px solid #222',
+                              borderRadius: '4px',
+                              color: '#f5f5e8'
+                            }}
+                            formatter={(value: number, name: string, props: any) => {
+                              const conf = props.payload?.confidence;
+                              const confText = conf !== undefined ? ` (Conf: ${(conf * 100).toFixed(1)}%)` : '';
+                              // Use Intl.NumberFormat for proper USD formatting
+                              const formatted = new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              }).format(value);
+                              return [`${formatted}${confText}`, 'Price'];
+                            }}
+                            labelFormatter={(label) => new Date(label).toLocaleString()}
+                          />
                         <Line 
                           type="monotone" 
                           dataKey="price" 
