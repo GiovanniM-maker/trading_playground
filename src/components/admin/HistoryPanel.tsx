@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HistoryRefreshControl } from '@/components/HistoryRefreshControl';
 
 interface HistoryStatus {
   symbol: string;
@@ -163,6 +164,11 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
             <X size={18} className="text-[#a9a9a9]" />
           </button>
         )}
+      </div>
+
+      {/* Auto Refresh Control */}
+      <div className="mb-4">
+        <HistoryRefreshControl />
       </div>
 
       {/* Actions */}

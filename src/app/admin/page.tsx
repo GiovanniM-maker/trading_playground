@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { RefreshCw, Download, Power } from 'lucide-react';
 import { TradingLoopControl } from '@/components/TradingLoopControl';
 import { HistoryPanel } from '@/components/admin/HistoryPanel';
+import { HistoryRefreshControl } from '@/components/HistoryRefreshControl';
 
 interface LatencyHistory {
   service: string;
@@ -322,6 +323,11 @@ export default function AdminPage() {
           </div>
           
           <TradingLoopControl />
+        </div>
+
+        {/* History Refresh Control */}
+        <div className="mb-4">
+          <HistoryRefreshControl />
         </div>
 
         {/* History Panel */}
