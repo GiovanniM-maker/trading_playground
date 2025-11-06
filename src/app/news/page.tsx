@@ -21,11 +21,9 @@ interface NewsItem {
 
 interface NewsResponse {
   results: NewsItem[];
-  source_status: {
-    CoinDesk: 'ok' | 'error';
-    CoinTelegraph: 'ok' | 'error';
-    CoinGecko: 'ok' | 'error';
-  };
+  count: number;
+  last_updated: string;
+  cached: boolean;
 }
 
 type SortOption = 'latest' | 'highest_sentiment' | 'most_bearish';

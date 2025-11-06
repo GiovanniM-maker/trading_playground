@@ -221,9 +221,19 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
             </button>
 
             <button
+              onClick={handleRefreshNews}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={cn(loading && "animate-spin")} />
+              Force Refresh News
+            </button>
+
+            <button
               onClick={handleClearCache}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#ff4d4d]/20 text-[#ff4d4d] border border-[#ff4d4d]/30 hover:bg-[#ff4d4d]/30 transition-colors"
             >
+              <Power size={16} />
               Clear Cache
             </button>
 
