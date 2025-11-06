@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getLivePrices, getAllHistoricalData } from '@/lib/market/fetch';
 import { getCache, setCache } from '@/lib/redis';
+import { getMarket, updateMarket } from '@/lib/db';
 import { COINS } from '@/lib/market/config';
 
 // Mark as dynamic route

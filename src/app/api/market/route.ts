@@ -1,113 +1,119 @@
 import { NextResponse } from 'next/server';
+import { getMarket, updateMarket } from '@/lib/db';
+import { getLivePrices } from '@/lib/market/fetch';
+import { COINS, getCoinBySymbol } from '@/lib/market/config';
 
-const COINGECKO_API = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana&order=market_cap_desc&per_page=3&page=1&sparkline=false&price_change_percentage=24h';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-interface MarketData {
-  id: string;
-  symbol: string;
-  name: string;
-  price: number;
-  change_24h: number;
-  high_24h: number;
-  low_24h: number;
-  volume: number;
-  market_cap: number;
-  updated_at: string;
-}
-
-const FALLBACK_DATA: MarketData[] = [
-  {
-    id: 'bitcoin',
-    symbol: 'btc',
-    name: 'Bitcoin',
-    price: 50000,
-    change_24h: 2.5,
-    high_24h: 50500,
-    low_24h: 49000,
-    volume: 32000000000,
-    market_cap: 950000000000,
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'ethereum',
-    symbol: 'eth',
-    name: 'Ethereum',
-    price: 3000,
-    change_24h: -1.2,
-    high_24h: 3100,
-    low_24h: 2950,
-    volume: 12000000000,
-    market_cap: 360000000000,
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'solana',
-    symbol: 'sol',
-    name: 'Solana',
-    price: 140,
-    change_24h: 5.5,
-    high_24h: 145,
-    low_24h: 135,
-    volume: 2000000000,
-    market_cap: 60000000000,
-    updated_at: new Date().toISOString(),
-  },
-];
-
-async function fetchWithRetry(url: string, maxRetries = 1): Promise<Response> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await fetch(url, {
-        next: { revalidate: 60 },
-      });
-
-      if (response.status === 429 && attempt < maxRetries) {
-        // Rate limited - wait 1 second and retry
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        continue;
-      }
-
-      return response;
-    } catch (error) {
-      if (attempt === maxRetries) throw error;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  throw new Error('Max retries exceeded');
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const response = await fetchWithRetry(COINGECKO_API);
+    const { searchParams } = new URL(request.url);
+    const symbol = searchParams.get('symbol') || 'BTC';
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        console.warn('CoinGecko rate limit hit, using fallback data');
-        return NextResponse.json(FALLBACK_DATA.map(item => ({ ...item, mock: true })));
-      }
-      throw new Error(`CoinGecko API error: ${response.status}`);
+    const coin = getCoinBySymbol(symbol);
+    if (!coin) {
+      return NextResponse.json(
+        { error: `Invalid symbol: ${symbol}` },
+        { status: 400 }
+      );
     }
 
-    const data = await response.json();
-    
-    // Transform CoinGecko response to our format
-    const marketData: MarketData[] = data.map((coin: any) => ({
-      id: coin.id,
-      symbol: coin.symbol,
-      name: coin.name,
-      price: coin.current_price,
-      change_24h: coin.price_change_percentage_24h || 0,
-      high_24h: coin.high_24h,
-      low_24h: coin.low_24h,
-      volume: coin.total_volume,
-      market_cap: coin.market_cap,
-      updated_at: coin.last_updated || new Date().toISOString(),
-    }));
-    
-    return NextResponse.json(marketData);
+    // Get market data from persistence layer
+    let marketData = await getMarket(symbol);
+
+    // If no market data, fetch from CoinGecko and store it
+    if (!marketData || !marketData.history || marketData.history.length === 0) {
+      try {
+        // Fetch live prices
+        const livePrices = await getLivePrices();
+        const livePrice = livePrices.find(p => p.symbol === symbol);
+
+        if (livePrice && livePrice.price_usd > 0) {
+          // Generate history from mock if needed
+          const basePrices: Record<string, number> = {
+            BTC: 50000,
+            ETH: 3000,
+            SOL: 140,
+            BNB: 600,
+            DOGE: 0.15,
+            XRP: 0.5,
+          };
+
+          const basePrice = basePrices[symbol] || 1000;
+          const history: Array<{ time: string; price: number }> = [];
+          
+          // Generate 90 days of daily history
+          for (let i = 90; i >= 0; i--) {
+            const time = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString();
+            const price = livePrice.price_usd * (0.85 + Math.random() * 0.3);
+            history.push({ time, price: Math.round(price * 100) / 100 });
+          }
+
+          marketData = {
+            symbol,
+            price: livePrice.price_usd,
+            change_24h: livePrice.change_24h,
+            volume_24h: basePrice * (1000000 + Math.random() * 5000000),
+            market_cap: basePrice * (10000000 + Math.random() * 50000000),
+            history,
+          };
+
+          await updateMarket(symbol, marketData);
+        }
+      } catch (error) {
+        console.error('Error fetching market data:', error);
+      }
+    } else {
+      // Update live price if available
+      try {
+        const livePrices = await getLivePrices();
+        const livePrice = livePrices.find(p => p.symbol === symbol);
+        
+        if (livePrice && livePrice.price_usd > 0) {
+          marketData.price = livePrice.price_usd;
+          marketData.change_24h = livePrice.change_24h;
+          
+          // Add latest price point to history
+          marketData.history.push({
+            time: new Date().toISOString(),
+            price: livePrice.price_usd,
+          });
+          
+          // Keep only last 90 days
+          const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+          marketData.history = marketData.history.filter(
+            point => new Date(point.time).getTime() >= cutoff
+          );
+
+          await updateMarket(symbol, marketData);
+        }
+      } catch (error) {
+        console.error('Error updating live price:', error);
+      }
+    }
+
+    if (!marketData) {
+      return NextResponse.json(
+        { error: 'Market data not available' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ...marketData,
+      coin: {
+        id: coin.id,
+        name: coin.name,
+        color: coin.color,
+      },
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
-    console.error('Error fetching market data from CoinGecko:', error);
-    // Return fallback data with mock flag
-    return NextResponse.json(FALLBACK_DATA.map(item => ({ ...item, mock: true })));
+    console.error('Error in market API:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    );
   }
 }

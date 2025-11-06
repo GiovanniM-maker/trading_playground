@@ -1,311 +1,334 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { HeaderBar } from '@/components/HeaderBar';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
+import { COINS, CoinConfig } from '@/lib/market/config';
 import { cn } from '@/lib/utils';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface MarketData {
-  id: string;
   symbol: string;
-  name: string;
   price: number;
   change_24h: number;
-  high_24h: number;
-  low_24h: number;
-  volume: number;
+  volume_24h: number;
   market_cap: number;
-  updated_at: string;
-  mock?: boolean;
+  history: Array<{ time: string; price: number }>;
+  coin: {
+    id: string;
+    name: string;
+    color: string;
+  };
 }
 
-interface HistoryPoint {
-  time: string;
-  value: number;
-}
-
-interface HistoryData {
-  id: string;
-  data: HistoryPoint[];
-  mock?: boolean;
+interface NewsItem {
+  title: string;
+  url: string;
+  source: string;
+  sentiment: 'Bullish' | 'Bearish' | 'Neutral';
+  published_at: string;
 }
 
 export default function MarketPage() {
-  const [marketData, setMarketData] = useState<MarketData[]>([]);
-  const [selectedCoin, setSelectedCoin] = useState<string>('bitcoin');
-  const [historyData, setHistoryData] = useState<HistoryData | null>(null);
+  const [selectedCoin, setSelectedCoin] = useState<CoinConfig>(COINS[0]);
+  const [marketData, setMarketData] = useState<MarketData | null>(null);
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('7d');
+  const [newsSidebarOpen, setNewsSidebarOpen] = useState(true);
 
   const fetchMarketData = async () => {
     try {
-      setError(null);
-      const response = await fetch('/api/market');
+      const response = await fetch(`/api/market?symbol=${selectedCoin.symbol}`);
       if (!response.ok) throw new Error('Failed to fetch market data');
       
       const data = await response.json();
       setMarketData(data);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching market data:', err);
-      setError('Failed to load market data. Using fallback.');
-      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching market data:', error);
     }
   };
 
-  const fetchHistoryData = async (coinId: string) => {
+  const fetchNews = async () => {
     try {
-      setHistoryError(null);
-      setHistoryLoading(true);
-      const response = await fetch(`/api/market/history?id=${coinId}`);
-      if (!response.ok) throw new Error('Failed to fetch history data');
+      const response = await fetch(`/api/news?symbol=${selectedCoin.symbol}`);
+      if (!response.ok) throw new Error('Failed to fetch news');
       
       const data = await response.json();
-      setHistoryData(data);
-      setHistoryLoading(false);
-    } catch (err) {
-      console.error('Error fetching history data:', err);
-      setHistoryError('Failed to load history. Using fallback.');
-      setHistoryLoading(false);
+      const newsItems: NewsItem[] = (data.results || [])
+        .slice(0, 10)
+        .map((item: any) => ({
+          title: item.title,
+          url: item.url,
+          source: item.source || 'Unknown',
+          sentiment: item.sentiment || item.sentiment_label || 'Neutral',
+          published_at: item.published_at || new Date().toISOString(),
+        }));
+      setNews(newsItems);
+    } catch (error) {
+      console.error('Error fetching news:', error);
     }
   };
 
   useEffect(() => {
-    fetchMarketData();
-    const interval = setInterval(fetchMarketData, 60000); // Update every 60 seconds
-    return () => clearInterval(interval);
-  }, []);
+    const loadData = async () => {
+      setLoading(true);
+      await fetchMarketData();
+      await fetchNews();
+      setLoading(false);
+    };
 
-  useEffect(() => {
-    if (selectedCoin) {
-      fetchHistoryData(selectedCoin);
-      const interval = setInterval(() => fetchHistoryData(selectedCoin), 60000); // Update every 60 seconds
-      return () => clearInterval(interval);
-    }
+    loadData();
+
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchMarketData();
+      fetchNews();
+    }, 30000);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
 
-  const selectedCoinData = marketData.find(c => c.id === selectedCoin);
-  const coinOptions = marketData.map(c => ({
-    id: c.id,
-    symbol: c.symbol.toUpperCase(),
-    name: c.name,
-  }));
-
-  // Format chart data
-  const chartData = useMemo(() => {
-    if (!historyData || !historyData.data) return [];
+  const formatTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
     
-    return historyData.data.map(point => ({
-      time: new Date(point.time).toLocaleString('en-US', { 
-        month: 'short', 
-        day: 'numeric', 
-        hour: '2-digit' 
-      }),
-      price: point.value,
-      timestamp: point.time,
-    }));
-  }, [historyData]);
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
 
-  // Determine line color based on price trend
-  const lineColor = useMemo(() => {
-    if (!chartData || chartData.length < 2) return '#00b686';
-    const firstPrice = chartData[0].price;
-    const lastPrice = chartData[chartData.length - 1].price;
-    return lastPrice >= firstPrice ? '#00b686' : '#ff4d4d';
-  }, [chartData]);
+  const getSentimentColor = (sentiment: string) => {
+    switch (sentiment) {
+      case 'Bullish': return 'bg-[#00b686]/20 text-[#00b686] border-[#00b686]/30';
+      case 'Bearish': return 'bg-[#ff4d4d]/20 text-[#ff4d4d] border-[#ff4d4d]/30';
+      default: return 'bg-[#8A8A8A]/20 text-[#8A8A8A] border-[#8A8A8A]/30';
+    }
+  };
+
+  // Filter historical data based on time range
+  const filteredHistory = marketData?.history.filter((point) => {
+    if (timeRange === 'all') return true;
+    
+    const pointDate = new Date(point.time);
+    const now = new Date();
+    const days = {
+      '24h': 1,
+      '7d': 7,
+      '30d': 30,
+      '90d': 90,
+      '1y': 365,
+    }[timeRange] || 7;
+    
+    return (now.getTime() - pointDate.getTime()) <= days * 24 * 60 * 60 * 1000;
+  }) || [];
+
+  const formatNumber = (num: number) => {
+    if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+    if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
+    return `$${num.toFixed(2)}`;
+  };
 
   return (
     <div className="flex flex-col w-full h-screen bg-[#0c0c0d] text-[#f5f5e8] overflow-hidden">
       <HeaderBar />
-      <main className="flex-grow h-[calc(100vh-90px)] flex flex-col p-6 overflow-y-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-[#f5f5e8] uppercase tracking-wide mb-2">
-            💹 Market Monitor
-          </h1>
-          {(error || historyError) && (
-            <div className="text-xs text-yellow-500 mb-2">
-              ⚠️ {(error || historyError) && 'Using fallback data'}
-            </div>
-          )}
-          <div className="flex items-center gap-4">
-            <select
-              value={selectedCoin}
-              onChange={(e) => {
-                setSelectedCoin(e.target.value);
-                setHistoryData(null);
-              }}
-              className="bg-[#181818] border border-[#222] px-4 py-2 text-sm text-[#f5f5e8] focus:outline-none focus:border-[#3a3a3a]"
-            >
-              {coinOptions.map(coin => (
-                <option key={coin.id} value={coin.id}>
-                  {coin.symbol} - {coin.name}
-                </option>
-              ))}
-            </select>
-            {selectedCoinData && (
-              <span className="text-xs text-[#a9a9a9]">
-                Last updated: {new Date(selectedCoinData.updated_at).toLocaleTimeString()}
-                {selectedCoinData.mock && ' (Mock Data)'}
-              </span>
+      <main className="flex-grow h-[calc(100vh-90px)] flex overflow-hidden">
+        {/* Main Content */}
+        <div className={cn(
+          "flex-grow flex flex-col transition-all duration-300",
+          newsSidebarOpen ? "mr-80" : "mr-0"
+        )}>
+          {/* Coin Tabs */}
+          <div className="flex items-center gap-2 p-4 border-b border-[#222] bg-[#141414]">
+            {COINS.map((coin) => (
+              <button
+                key={coin.id}
+                onClick={() => setSelectedCoin(coin)}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium transition-colors border border-[#222]",
+                  selectedCoin.id === coin.id
+                    ? "bg-[#181818] text-[#f5f5e8] border-[#3a3a3a]"
+                    : "bg-[#141414] text-[#a9a9a9] hover:text-[#f5f5e8] hover:border-[#3a3a3a]"
+                )}
+                style={selectedCoin.id === coin.id ? { borderColor: coin.color } : {}}
+              >
+                {coin.symbol}
+              </button>
+            ))}
+          </div>
+
+          {/* Market Data */}
+          <div className="flex-grow flex flex-col p-6 min-h-0">
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-[#a9a9a9]">
+                Loading market data...
+              </div>
+            ) : marketData ? (
+              <>
+                {/* Stats Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-[#181818] border border-[#222] p-4">
+                    <div className="text-xs text-[#a9a9a9] mb-1">Current Price</div>
+                    <div className="text-xl font-bold text-[#f5f5e8]">
+                      ${marketData.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-[#181818] border border-[#222] p-4">
+                    <div className="text-xs text-[#a9a9a9] mb-1">24h Change</div>
+                    <div className={cn(
+                      "text-xl font-bold",
+                      marketData.change_24h >= 0 ? "text-[#00b686]" : "text-[#ff4d4d]"
+                    )}>
+                      {marketData.change_24h >= 0 ? '+' : ''}{marketData.change_24h.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="bg-[#181818] border border-[#222] p-4">
+                    <div className="text-xs text-[#a9a9a9] mb-1">24h Volume</div>
+                    <div className="text-xl font-bold text-[#f5f5e8]">
+                      {formatNumber(marketData.volume_24h)}
+                    </div>
+                  </div>
+                  <div className="bg-[#181818] border border-[#222] p-4">
+                    <div className="text-xs text-[#a9a9a9] mb-1">Market Cap</div>
+                    <div className="text-xl font-bold text-[#f5f5e8]">
+                      {formatNumber(marketData.market_cap)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Time Range Selector */}
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-[#f5f5e8]">
+                    {selectedCoin.name} ({selectedCoin.symbol})
+                  </h2>
+                  <div className="flex gap-2">
+                    {(['24h', '7d', '30d', '90d', '1y', 'all'] as const).map((range) => (
+                      <button
+                        key={range}
+                        onClick={() => setTimeRange(range)}
+                        className={cn(
+                          "px-3 py-1 text-xs font-medium transition-colors border border-[#222]",
+                          timeRange === range
+                            ? "bg-[#181818] text-[#f5f5e8] border-[#3a3a3a]"
+                            : "bg-[#141414] text-[#a9a9a9] hover:text-[#f5f5e8] hover:border-[#3a3a3a]"
+                        )}
+                      >
+                        {range.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Chart */}
+                <div className="flex-grow min-h-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={filteredHistory}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                      <XAxis 
+                        dataKey="time" 
+                        stroke="#a9a9a9"
+                        tick={{ fill: '#a9a9a9', fontSize: 10 }}
+                        tickFormatter={(value) => new Date(value).toLocaleDateString()}
+                      />
+                      <YAxis 
+                        stroke="#a9a9a9"
+                        tick={{ fill: '#a9a9a9', fontSize: 12 }}
+                        domain={['auto', 'auto']}
+                        tickFormatter={(value) => `$${value.toLocaleString()}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#181818', 
+                          border: '1px solid #222',
+                          borderRadius: '4px',
+                          color: '#f5f5e8'
+                        }}
+                        formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
+                        labelFormatter={(label) => new Date(label).toLocaleString()}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="price" 
+                        stroke={selectedCoin.color}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={true}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-full text-[#a9a9a9]">
+                No market data available
+              </div>
             )}
           </div>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center h-full text-[#a9a9a9]">
-            <div className="text-center">
-              <div className="animate-pulse mb-2">Loading market data...</div>
-              <div className="w-64 h-4 bg-[#181818] rounded animate-pulse"></div>
-            </div>
+        {/* News Sidebar */}
+        <div className={cn(
+          "w-80 bg-[#181818] border-l border-[#222] flex flex-col transition-all duration-300",
+          newsSidebarOpen ? "translate-x-0" : "translate-x-full"
+        )}>
+          <div className="flex items-center justify-between p-4 border-b border-[#222]">
+            <h3 className="text-sm font-semibold text-[#f5f5e8] uppercase tracking-wide">
+              Latest News
+            </h3>
+            <button
+              onClick={() => setNewsSidebarOpen(false)}
+              className="p-1 hover:bg-[#141414] transition-colors"
+            >
+              <ChevronRight size={18} className="text-[#a9a9a9]" />
+            </button>
           </div>
-        ) : selectedCoinData ? (
-          <>
-            {/* Metrics */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">Current Price</div>
-                {loading ? (
-                  <div className="w-24 h-6 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className="text-xl font-semibold text-[#f5f5e8]">
-                    ${selectedCoinData.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {news.length === 0 ? (
+              <div className="text-xs text-[#a9a9a9]">No news available</div>
+            ) : (
+              news.map((item, index) => (
+                <a
+                  key={index}
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block bg-[#141414] border border-[#222] p-3 hover:border-[#3a3a3a] transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span className={cn(
+                      "text-xs font-medium px-2 py-1 border flex-shrink-0",
+                      getSentimentColor(item.sentiment)
+                    )}>
+                      {item.sentiment}
+                    </span>
+                    <span className="text-xs text-[#a9a9a9]">{formatTime(item.published_at)}</span>
                   </div>
-                )}
-              </div>
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">24h Change</div>
-                {loading ? (
-                  <div className="w-20 h-6 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className={cn(
-                    "text-xl font-semibold",
-                    selectedCoinData.change_24h >= 0 ? 'text-[#00b686]' : 'text-[#ff4d4d]'
-                  )}>
-                    {selectedCoinData.change_24h >= 0 ? '+' : ''}{selectedCoinData.change_24h.toFixed(2)}%
-                  </div>
-                )}
-              </div>
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">24h High</div>
-                {loading ? (
-                  <div className="w-24 h-6 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className="text-xl font-semibold text-[#f5f5e8]">
-                    ${selectedCoinData.high_24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                )}
-              </div>
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">24h Low</div>
-                {loading ? (
-                  <div className="w-24 h-6 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className="text-xl font-semibold text-[#f5f5e8]">
-                    ${selectedCoinData.low_24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">24h Volume</div>
-                {loading ? (
-                  <div className="w-32 h-5 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className="text-lg font-semibold text-[#f5f5e8]">
-                    ${(selectedCoinData.volume / 1e9).toFixed(2)}B
-                  </div>
-                )}
-              </div>
-              <div className="bg-[#181818] border border-[#222] p-4">
-                <div className="text-xs text-[#a9a9a9] mb-1">Market Cap</div>
-                {loading ? (
-                  <div className="w-32 h-5 bg-[#141414] rounded animate-pulse"></div>
-                ) : (
-                  <div className="text-lg font-semibold text-[#f5f5e8]">
-                    ${(selectedCoinData.market_cap / 1e9).toFixed(2)}B
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 7-Day Chart */}
-            <div className="flex-grow h-full min-h-[500px] bg-[#181818] border border-[#222] p-4">
-              <div className="mb-2 text-xs text-[#a9a9a9] uppercase tracking-wide">
-                7-Day Price History {historyData?.mock && '(Mock Data)'}
-              </div>
-              {historyLoading ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <div className="animate-pulse mb-2 text-[#a9a9a9]">Loading chart data...</div>
-                    <div className="w-96 h-64 bg-[#141414] rounded animate-pulse"></div>
-                  </div>
-                </div>
-              ) : chartData.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-[#a9a9a9]">
-                  No chart data available
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="#a9a9a9"
-                      tick={{ fill: '#a9a9a9', fontSize: 10 }}
-                      interval="preserveStartEnd"
-                      axisLine={{ stroke: '#222' }}
-                      angle={-45}
-                      textAnchor="end"
-                      height={60}
-                    />
-                    <YAxis 
-                      stroke="#a9a9a9"
-                      tick={{ fill: '#a9a9a9', fontSize: 11 }}
-                      domain={['auto', 'auto']}
-                      tickFormatter={(value) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
-                      axisLine={{ stroke: '#222' }}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#181818', 
-                        border: '1px solid #222',
-                        color: '#f5f5e8'
-                      }}
-                      labelStyle={{ color: '#a9a9a9' }}
-                      formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
-                      labelFormatter={(label) => `Time: ${label}`}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="price"
-                      stroke={lineColor}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4, fill: lineColor }}
-                      isAnimationActive={true}
-                      animationDuration={500}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center h-full text-[#a9a9a9]">
-            No market data available
+                  <h4 className="text-xs font-semibold text-[#f5f5e8] mb-1 line-clamp-2">
+                    {item.title}
+                  </h4>
+                  <div className="text-xs text-[#a9a9a9]">{item.source}</div>
+                </a>
+              ))
+            )}
           </div>
+        </div>
+
+        {/* Sidebar Toggle Button (when closed) */}
+        {!newsSidebarOpen && (
+          <button
+            onClick={() => setNewsSidebarOpen(true)}
+            className="fixed top-[70px] right-2 p-2 bg-[#181818] border border-[#222] hover:border-[#3a3a3a] transition-colors z-[60]"
+          >
+            <ChevronLeft size={18} className="text-[#f5f5e8]" />
+          </button>
         )}
       </main>
     </div>

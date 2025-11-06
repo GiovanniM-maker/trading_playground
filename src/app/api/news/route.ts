@@ -24,10 +24,13 @@ interface NewsResponse {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const symbol = searchParams.get('symbol');
+    
     // Check Redis cache first
-    const cacheKey = 'news_cache';
+    const cacheKey = symbol ? `news_cache:${symbol}` : 'news_cache';
     const cached = await getCache(cacheKey);
     if (cached && Array.isArray(cached) && cached.length > 0) {
       // Return cached data but still refresh in background
@@ -101,8 +104,19 @@ export async function GET() {
       new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
     );
 
+    // Filter by symbol if provided
+    let filtered = withSentiment;
+    if (symbol) {
+      filtered = withSentiment.filter((item: any) => 
+        (item.instruments && Array.isArray(item.instruments) && 
+         item.instruments.some((inst: string) => inst.toUpperCase() === symbol.toUpperCase())) ||
+        item.title.toUpperCase().includes(symbol.toUpperCase()) ||
+        item.description?.toUpperCase().includes(symbol.toUpperCase())
+      );
+    }
+
     // Limit to 50 items
-    const limited = withSentiment.slice(0, 50);
+    const limited = filtered.slice(0, 50);
 
     // Cache in Redis for 5 minutes
     await setCache(cacheKey, limited, 300);

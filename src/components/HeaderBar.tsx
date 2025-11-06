@@ -6,15 +6,14 @@ import { cn } from '@/lib/utils';
 import { useLivePrices } from '@/lib/market/live';
 
 const navLinks = [
-  { href: '/', label: 'Live' },
-  { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/trades', label: 'Completed Trades' },
-  { href: '/positions', label: 'Positions' },
-  { href: '/observer', label: '📊 Observer' },
-  { href: '/monitor', label: '📈 Monitor' },
+  { href: '/', label: 'Dashboard' },
+  { href: '/live', label: '📊 Live' },
   { href: '/market', label: '💹 Market' },
-  { href: '/news', label: '📰 News' },
   { href: '/portfolio', label: '💼 Portfolio' },
+  { href: '/news', label: '📰 News' },
+  { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/trades', label: 'Trades' },
+  { href: '/positions', label: 'Positions' },
   { href: '/admin', label: '🧩 Admin' },
 ];
 
