@@ -685,6 +685,42 @@ export async function backfillSymbol(
           .substring(0, 16),
       };
 
+      // Smart merge: if data exists, merge instead of overwrite
+      if (!force) {
+        const existing = await loadHistory(symbol);
+        if (existing && existing.points.length > 0) {
+          // Merge with existing data (don't overwrite existing points)
+          const existingMap = new Map<number, FusedPoint>();
+          for (const point of existing.points) {
+            existingMap.set(point.t, point);
+          }
+          
+          // Add new points (only if timestamp doesn't exist)
+          let mergedCount = 0;
+          for (const point of fused.points) {
+            if (!existingMap.has(point.t)) {
+              existingMap.set(point.t, point);
+              mergedCount++;
+            }
+          }
+          
+          const mergedPoints = Array.from(existingMap.values()).sort((a, b) => a.t - b.t);
+          
+          // Update fused series with merged data
+          fused.points = mergedPoints;
+          fused.from = mergedPoints[0].t;
+          fused.to = mergedPoints[mergedPoints.length - 1].t;
+          
+          // Recalculate checksum
+          fused.checksum = createHash('sha256')
+            .update(JSON.stringify(mergedPoints.map(p => ({ t: p.t, p: p.p, c: p.c }))))
+            .digest('hex')
+            .substring(0, 16);
+          
+          console.log(`[Backfill ${symbol}] Merged ${mergedCount} new points with ${existing.points.length} existing`);
+        }
+      }
+
       await saveHistory(symbol, fused, undefined, force);
       
       // Log the backfill

@@ -146,68 +146,6 @@ export async function checkRedis(): Promise<HealthCheckResult> {
   }
 }
 
-export async function checkLocalNews(): Promise<HealthCheckResult> {
-  const startTime = Date.now();
-  try {
-    // Check Redis connection
-    const redisCheck = await checkRedis();
-    if (redisCheck.status !== 'ok') {
-      return {
-        service: 'Local News',
-        status: 'error',
-        latency: Date.now() - startTime,
-        message: 'Redis connection failed',
-        timestamp: Date.now(),
-      };
-    }
-
-    // Check seed file existence
-    const { checkSeedFileExists } = await import('./news/local');
-    const seedExists = await checkSeedFileExists();
-    
-    const latency = Date.now() - startTime;
-
-    if (!seedExists) {
-      return {
-        service: 'Local News',
-        status: 'warning',
-        latency,
-        message: 'Missing seed file at /data/news/seed.json',
-        timestamp: Date.now(),
-        details: { seed_file_exists: false },
-      };
-    }
-
-    // Try to get news to verify it works
-    const { getLocalNews } = await import('./news/local');
-    const { results } = await getLocalNews();
-
-    return {
-      service: 'Local News',
-      status: 'ok',
-      latency,
-      message: `OK (Local) - ${results.length} articles available`,
-      timestamp: Date.now(),
-      details: { 
-        count: results.length,
-        seed_file_exists: true,
-        source: 'local',
-      },
-    };
-  } catch (error) {
-    const latency = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Check failed';
-    
-    return {
-      service: 'Local News',
-      status: 'error',
-      latency,
-      message: errorMessage,
-      timestamp: Date.now(),
-    };
-  }
-}
-
 export async function checkHuggingFace(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
@@ -371,84 +309,6 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
     };
   }
 }
-
-export async function checkMarketAPI(baseUrl: string = ''): Promise<HealthCheckResult> {
-  const startTime = Date.now();
-  try {
-    const url = baseUrl ? `${baseUrl}/api/markets` : '/api/markets';
-    const response = await fetchWithTimeout(url, {}, 8000);
-
-    const latency = Date.now() - startTime;
-
-    if (!response.ok) {
-      // Log error
-      const { logError } = await import('./errors/logs');
-      await logError('Market API', `HTTP ${response.status}: ${response.statusText}`, response.status);
-      
-      // Try to get cached data as fallback
-      if (response.status === 401 || response.status === 403) {
-        try {
-          const { getCache } = await import('./redis');
-          const cached = await getCache('market_live_prices');
-          if (cached) {
-            return {
-              service: 'Market API',
-              status: 'warning',
-              latency,
-              message: `Auth failed but using cached data`,
-              timestamp: Date.now(),
-              details: { usingCache: true },
-            };
-          }
-        } catch {
-          // Ignore cache errors
-        }
-      }
-      
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    const hasLivePrices = data.live && Array.isArray(data.live) && data.live.length > 0;
-    const hasHistory = data.history && typeof data.history === 'object';
-
-    if (!hasLivePrices) {
-      return {
-        service: 'Market API',
-        status: 'warning',
-        latency,
-        message: 'No live prices available',
-        timestamp: Date.now(),
-      };
-    }
-
-    return {
-      service: 'Market API',
-      status: 'ok',
-      latency,
-      message: `Live prices for ${data.live.length} coins`,
-      timestamp: Date.now(),
-      details: { coins: data.live.length, hasHistory },
-    };
-  } catch (error) {
-    const latency = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-    
-    // Log error
-    const { logError } = await import('./errors/logs');
-    await logError('Market API', errorMessage);
-    
-    return {
-      service: 'Market API',
-      status: 'error',
-      latency,
-      message: errorMessage,
-      timestamp: Date.now(),
-    };
-  }
-}
-
 
 export async function checkRedisLatency(): Promise<HealthCheckResult> {
   const startTime = Date.now();
@@ -675,9 +535,7 @@ export async function checkNewsAggregator(baseUrl: string = ''): Promise<HealthC
 export async function runAllChecks(baseUrl: string = ''): Promise<HealthCheckResult[]> {
   const checks = [
     checkRedis(),
-    checkLocalNews(),
     checkHuggingFace(),
-    checkMarketAPI(baseUrl),
     checkNewsAggregator(baseUrl),
     checkRedisLatency(),
     Promise.resolve(checkVercelEnv()),

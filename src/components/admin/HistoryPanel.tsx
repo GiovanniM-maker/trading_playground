@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { RefreshCw, Trash2, X, CheckCircle2, AlertCircle, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { HistoryRefreshControl } from '@/components/HistoryRefreshControl';
 
@@ -184,9 +184,75 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
         <button
           onClick={() => handleBackfill(true)}
           disabled={backfilling}
+          className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#00b686]/20 text-[#00b686] border border-[#00b686]/30 hover:bg-[#00b686]/30 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={16} className={cn(backfilling && "animate-spin")} />
+          🔄 Ricarica Tutto
+        </button>
+        <button
+          onClick={async () => {
+            if (!confirm('⚠️ ATTENZIONE: Vuoi cancellare TUTTI i dati storici di tutte le crypto? Questa azione è IRREVERSIBILE!')) {
+              return;
+            }
+            if (!confirm('Sei SICURO? Premi OK per confermare la cancellazione di TUTTI i dati.')) {
+              return;
+            }
+            
+            setBackfilling(true);
+            try {
+              const response = await fetch('/api/admin/history/clear-all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm: 'DELETE_ALL_HISTORY' }),
+              });
+              
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Clear failed');
+              }
+              
+              const result = await response.json();
+              alert(`✅ Cancellati ${result.deleted} elementi${result.errors ? `\n⚠️ ${result.errors} errori` : ''}`);
+              fetchStatus();
+            } catch (error) {
+              console.error('Error clearing all history:', error);
+              alert(`❌ Errore: ${error instanceof Error ? error.message : 'Unknown'}`);
+            } finally {
+              setBackfilling(false);
+            }
+          }}
+          disabled={backfilling}
           className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#ff4d4d]/20 text-[#ff4d4d] border border-[#ff4d4d]/30 hover:bg-[#ff4d4d]/30 transition-colors disabled:opacity-50"
         >
-          Force Rebuild
+          🗑️ Cancella Tutto
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const response = await fetch('/api/admin/history/export?format=csv');
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Export failed');
+              }
+              
+              const blob = await response.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `crypto_history_${Date.now()}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+              
+              alert('✅ Dati scaricati!');
+            } catch (error) {
+              console.error('Error exporting history:', error);
+              alert(`❌ Errore export: ${error instanceof Error ? error.message : 'Unknown'}`);
+            }
+          }}
+          className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#00b686]/20 text-[#00b686] border border-[#00b686]/30 hover:bg-[#00b686]/30 transition-colors"
+        >
+          <Download size={16} />
+          📥 Scarica CSV
         </button>
         <button
           onClick={async () => {

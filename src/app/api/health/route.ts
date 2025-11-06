@@ -2,9 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   runAllChecks,
   checkRedis,
-  checkLocalNews,
   checkHuggingFace,
-  checkMarketAPI,
   checkRedisLatency,
   checkVercelEnv,
   checkGitHub,
@@ -26,14 +24,8 @@ export async function GET(request: Request) {
         case 'redis':
           result = await checkRedis();
           break;
-        case 'localnews':
-          result = await checkLocalNews();
-          break;
         case 'huggingface':
           result = await checkHuggingFace();
-          break;
-        case 'market':
-          result = await checkMarketAPI(baseUrl);
           break;
         case 'redis-latency':
           result = await checkRedisLatency();

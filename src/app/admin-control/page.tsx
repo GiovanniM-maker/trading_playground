@@ -105,8 +105,6 @@ export default function AdminControlRoomPage() {
       'Redis': 'redis',
       'Hugging Face API': 'huggingface',
       'Sentiment System': 'huggingface',
-      'Market API': 'market',
-      'Local News': 'localnews',
       'Redis Latency': 'redis-latency',
       'Vercel Environment': 'vercel-env',
       'GitHub Sync': 'github',

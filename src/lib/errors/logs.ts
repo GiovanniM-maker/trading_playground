@@ -8,6 +8,8 @@ export interface ErrorLogEntry {
   status?: number;
   timestamp: number;
   retryCount?: number;
+  level?: 'ok' | 'warning' | 'error' | 'info';
+  latency?: number;
 }
 
 const MAX_ERRORS = 200;
@@ -18,8 +20,16 @@ export async function logError(
   service: string,
   error: string,
   status?: number,
-  retryCount?: number
+  retryCount?: number,
+  latency?: number
 ): Promise<ErrorLogEntry> {
+  // Normalize log level based on status code
+  const level =
+    status === 200 ? "ok" :
+    status && status >= 400 && status < 500 ? "error" :
+    status && status >= 500 ? "warning" :
+    "info";
+
   const entry: ErrorLogEntry = {
     id: randomUUID(),
     service,
@@ -27,6 +37,9 @@ export async function logError(
     status,
     timestamp: Date.now(),
     retryCount,
+    // Add normalized fields for compatibility
+    level: level as any,
+    latency,
   };
 
   try {

@@ -66,7 +66,6 @@ export default function AdminPage() {
     const serviceMap: Record<string, string> = {
       'Redis': 'redis',
       'Hugging Face API': 'huggingface',
-      'Market API': 'market',
       'Redis Latency': 'redis-latency',
       'Vercel Environment': 'vercel-env',
       'GitHub Sync': 'github',
