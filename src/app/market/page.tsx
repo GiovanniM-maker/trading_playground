@@ -5,7 +5,7 @@ import { HeaderBar } from '@/components/HeaderBar';
 import { COINS, CoinConfig } from '@/lib/market/config';
 import { cn } from '@/lib/utils';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 
 interface MarketData {
   symbol: string;
@@ -24,6 +24,23 @@ interface MarketData {
   };
 }
 
+interface HistoryPoint {
+  t: number;
+  p: number;
+  c: number;
+}
+
+interface HistoryData {
+  symbol: string;
+  from: number;
+  to: number;
+  points: HistoryPoint[];
+  confidence: number;
+  sources_used: string[];
+  version: number;
+  range: string;
+}
+
 interface NewsItem {
   title: string;
   url: string;
@@ -37,7 +54,9 @@ export default function MarketPage() {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | 'all'>('7d');
+  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | '90d' | '1y' | '5y' | 'all'>('7d');
+  const [historyData, setHistoryData] = useState<HistoryData | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [newsSidebarOpen, setNewsSidebarOpen] = useState(true);
 
   const fetchMarketData = async () => {
@@ -73,11 +92,35 @@ export default function MarketPage() {
     }
   };
 
+  const fetchHistory = async (range: string = timeRange) => {
+    try {
+      setHistoryLoading(true);
+      const response = await fetch(`/api/history?symbol=${selectedCoin.symbol}&range=${range}`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          // History not backfilled yet
+          setHistoryData(null);
+          return;
+        }
+        throw new Error('Failed to fetch history');
+      }
+      
+      const data = await response.json();
+      setHistoryData(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+      setHistoryData(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
       await fetchMarketData();
       await fetchNews();
+      await fetchHistory('all'); // Load full history initially
       setLoading(false);
     };
 
@@ -92,6 +135,14 @@ export default function MarketPage() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
+
+  useEffect(() => {
+    // Refetch history when range changes
+    if (historyData) {
+      fetchHistory(timeRange);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange]);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -114,22 +165,24 @@ export default function MarketPage() {
     }
   };
 
-  // Filter historical data based on time range
-  const filteredHistory = marketData?.history.filter((point) => {
-    if (timeRange === 'all') return true;
-    
-    const pointDate = new Date(point.time);
-    const now = new Date();
-    const days = {
-      '24h': 1,
-      '7d': 7,
-      '30d': 30,
-      '90d': 90,
-      '1y': 365,
-    }[timeRange] || 7;
-    
-    return (now.getTime() - pointDate.getTime()) <= days * 24 * 60 * 60 * 1000;
-  }) || [];
+  // Use fused history data if available, otherwise fall back to marketData history
+  const chartData = historyData
+    ? historyData.points.map(p => ({
+        time: new Date(p.t).toISOString(),
+        price: p.p,
+        confidence: p.c,
+      }))
+    : (marketData?.history || []).map(p => ({
+        time: p.time,
+        price: p.price,
+        confidence: 1,
+      }));
+
+  const getConfidenceColor = (confidence: number) => {
+    if (confidence >= 0.95) return 'bg-[#00b686]/20 text-[#00b686] border-[#00b686]/30';
+    if (confidence >= 0.85) return 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30';
+    return 'bg-[#ff4d4d]/20 text-[#ff4d4d] border-[#ff4d4d]/30';
+  };
 
   const formatNumber = (num: number) => {
     if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
@@ -231,11 +284,28 @@ export default function MarketPage() {
 
                 {/* Time Range Selector */}
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-[#f5f5e8]">
-                    {selectedCoin.name} ({selectedCoin.symbol})
-                  </h2>
+                  <div className="flex items-center gap-4">
+                    <h2 className="text-xl font-semibold text-[#f5f5e8]">
+                      {selectedCoin.name} ({selectedCoin.symbol})
+                    </h2>
+                    {historyData && (
+                      <>
+                        <span className={cn(
+                          "px-2 py-1 text-xs font-medium border",
+                          getConfidenceColor(historyData.confidence)
+                        )}>
+                          Confidence: {(historyData.confidence * 100).toFixed(1)}%
+                        </span>
+                        {historyData.sources_used && historyData.sources_used.length > 0 && (
+                          <span className="px-2 py-1 text-xs text-[#a9a9a9] bg-[#141414] border border-[#222]">
+                            {historyData.sources_used.join(' + ')}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
                   <div className="flex gap-2">
-                    {(['24h', '7d', '30d', '90d', '1y', 'all'] as const).map((range) => (
+                    {(['24h', '7d', '30d', '90d', '1y', '5y', 'all'] as const).map((range) => (
                       <button
                         key={range}
                         onClick={() => setTimeRange(range)}
@@ -246,7 +316,7 @@ export default function MarketPage() {
                             : "bg-[#141414] text-[#a9a9a9] hover:text-[#f5f5e8] hover:border-[#3a3a3a]"
                         )}
                       >
-                        {range.toUpperCase()}
+                        {range === 'all' ? 'ALL' : range.toUpperCase()}
                       </button>
                     ))}
                   </div>
@@ -254,13 +324,21 @@ export default function MarketPage() {
 
                 {/* Chart */}
                 <div className="flex-grow min-h-0">
-                  {filteredHistory.length === 0 ? (
+                  {historyLoading ? (
                     <div className="flex items-center justify-center h-full text-[#a9a9a9]">
-                      No historical data available. Chart will appear once data is collected.
+                      <RefreshCw className="animate-spin mr-2" size={20} />
+                      Loading history...
+                    </div>
+                  ) : chartData.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-[#a9a9a9]">
+                      <div className="text-center">
+                        <p>No historical data available.</p>
+                        <p className="text-xs mt-2">Please run backfill in Admin panel.</p>
+                      </div>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={filteredHistory}>
+                      <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#222" />
                         <XAxis 
                           dataKey="time" 
@@ -281,7 +359,11 @@ export default function MarketPage() {
                             borderRadius: '4px',
                             color: '#f5f5e8'
                           }}
-                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
+                          formatter={(value: number, name: string, props: any) => {
+                            const conf = props.payload?.confidence;
+                            const confText = conf !== undefined ? ` (Conf: ${(conf * 100).toFixed(1)}%)` : '';
+                            return [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${confText}`, 'Price'];
+                          }}
                           labelFormatter={(label) => new Date(label).toLocaleString()}
                         />
                         <Line 

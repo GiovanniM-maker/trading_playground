@@ -7,6 +7,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'rec
 import { cn } from '@/lib/utils';
 import { RefreshCw, Download, Power } from 'lucide-react';
 import { TradingLoopControl } from '@/components/TradingLoopControl';
+import { HistoryPanel } from '@/components/admin/HistoryPanel';
 
 interface LatencyHistory {
   service: string;
@@ -284,6 +285,11 @@ export default function AdminPage() {
           <TradingLoopControl />
         </div>
 
+        {/* History Panel */}
+        <div className="mb-6">
+          <HistoryPanel />
+        </div>
+
         {/* Status Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {results.map((result) => {
@@ -370,6 +376,11 @@ export default function AdminPage() {
             Running initial health checks...
           </div>
         )}
+
+        {/* History Panel */}
+        <div className="mt-8">
+          <HistoryPanel />
+        </div>
       </main>
     </div>
   );
