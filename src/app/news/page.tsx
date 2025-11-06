@@ -125,7 +125,7 @@ export default function NewsPage() {
       <main className="flex-grow h-[calc(100vh-90px)] flex flex-col p-6 overflow-y-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-[#f5f5e8] uppercase tracking-wide mb-4">
-            📰 Crypto News Feed
+            Crypto News Feed
           </h1>
           
           {/* Source Status */}

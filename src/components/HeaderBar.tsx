@@ -7,14 +7,14 @@ import { useLivePrices } from '@/lib/market/live';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
-  { href: '/live', label: '📊 Live' },
-  { href: '/market', label: '💹 Market' },
-  { href: '/portfolio', label: '💼 Portfolio' },
-  { href: '/news', label: '📰 News' },
+  { href: '/live', label: 'Live' },
+  { href: '/market', label: 'Market' },
+  { href: '/portfolio', label: 'Portfolio' },
+  { href: '/news', label: 'News' },
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/trades', label: 'Trades' },
   { href: '/positions', label: 'Positions' },
-  { href: '/admin', label: '🧩 Admin' },
+  { href: '/admin', label: 'Admin' },
 ];
 
 export function HeaderBar() {
@@ -28,7 +28,7 @@ export function HeaderBar() {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-6">
             <h1 className="text-base font-semibold text-[var(--text-primary)] uppercase tracking-wide">
-              🧠 AI Trading Battle Royale
+              AI Trading Battle Royale
             </h1>
             <nav className="flex gap-0 border border-[var(--border-color)] bg-[var(--background)]">
               {navLinks.map((link) => (

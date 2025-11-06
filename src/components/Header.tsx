@@ -27,7 +27,7 @@ export function Header() {
         <div className="flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-semibold text-white">
-              🧠 AI Trading Battle Royale
+              AI Trading Battle Royale
             </h1>
             <nav className="flex gap-1">
               {navLinks.map((link) => (

@@ -47,7 +47,7 @@ export default function LivePage() {
       <main className="flex-grow h-[calc(100vh-90px)] flex flex-col p-6 overflow-y-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-[#f5f5e8] uppercase tracking-wide mb-2">
-            📊 Live Trade Stream
+            Live Trade Stream
           </h1>
           <p className="text-sm text-[#a9a9a9]">
             Real-time trading activity across all AI models

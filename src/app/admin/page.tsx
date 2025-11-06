@@ -6,6 +6,7 @@ import { HealthCheckResult } from '@/lib/healthChecks';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
 import { RefreshCw, Download, Power } from 'lucide-react';
+import { TradingLoopControl } from '@/components/TradingLoopControl';
 
 interface LatencyHistory {
   service: string;
@@ -225,7 +226,7 @@ export default function AdminPage() {
           <div className="flex items-center justify-between mb-2">
             <div>
               <h1 className="text-2xl font-semibold text-[#f5f5e8] uppercase tracking-wide mb-1">
-                🧩 System Health Dashboard
+                System Health Dashboard
               </h1>
               <p className="text-sm text-[#a9a9a9]">
                 Live verification of all connected services
@@ -267,18 +268,20 @@ export default function AdminPage() {
               Run Full Diagnostics
             </button>
             
-            <button
-              onClick={exportReport}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors"
-            >
-              <Download size={16} />
-              Export Report
-            </button>
-            
+              <button
+                onClick={exportReport}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors"
+              >
+                <Download size={16} />
+                Export Report
+              </button>
+              
             <div className="ml-auto text-xs text-[#a9a9a9]">
               Last checked: {formatTime(lastChecked)}
             </div>
           </div>
+          
+          <TradingLoopControl />
         </div>
 
         {/* Status Grid */}
