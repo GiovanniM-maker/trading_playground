@@ -119,40 +119,72 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
       };
     }
 
-    // Try v2 endpoint first (preferred), fallback to v1
-    let url = `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`;
-    let response = await fetchWithTimeout(
-      url,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
-          'Accept': 'application/json',
-        },
-      },
-      8000
-    );
+    // Try multiple endpoint variations
+    const endpoints = [
+      `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`,
+      `https://cryptopanic.com/api/${plan}/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`,
+      `https://cryptopanic.com/api/${plan}/v2/posts/?auth_token=${apiKey}&public=true&size=1`, // Without currencies filter
+    ];
 
-    // If v2 fails, try v1 endpoint
-    if (!response.ok && response.status === 502) {
-      url = `https://cryptopanic.com/api/${plan}/posts/?auth_token=${apiKey}&currencies=BTC&public=true&size=1`;
-      response = await fetchWithTimeout(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
-          'Accept': 'application/json',
-        },
-      }, 8000);
+    let response: Response | null = null;
+    let lastError: Error | null = null;
+
+    for (const url of endpoints) {
+      try {
+        response = await fetchWithTimeout(
+          url,
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)',
+              'Accept': 'application/json',
+            },
+          },
+          8000
+        );
+
+        // If we get a successful response or non-500 error, stop trying
+        if (response.ok || (response.status !== 500 && response.status !== 502)) {
+          break;
+        }
+
+        // If 500 or 502, try next endpoint
+        if (response.status === 500 || response.status === 502) {
+          lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+          continue;
+        }
+
+        // For other errors, stop trying
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Network error');
+        continue;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('All endpoints failed');
     }
 
     const latency = Date.now() - startTime;
 
     if (!response.ok) {
-      // If it's a 502, suggest it might be temporary
-      if (response.status === 502) {
+      // Classify error types
+      if (response.status === 500 || response.status === 502) {
         return {
           service: 'CryptoPanic API',
           status: 'warning',
           latency,
-          message: 'Temporary server issue (502) - may resolve shortly',
+          message: `Server issue (${response.status}) - CryptoPanic may be experiencing downtime`,
+          timestamp: Date.now(),
+          details: { note: 'This is a temporary issue on CryptoPanic\'s side' },
+        };
+      }
+      if (response.status === 401 || response.status === 403) {
+        return {
+          service: 'CryptoPanic API',
+          status: 'error',
+          latency,
+          message: `Authentication failed (${response.status}) - check API key`,
           timestamp: Date.now(),
         };
       }
@@ -197,10 +229,12 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
     }
 
     // Try alternative models if the primary one is unavailable (410 Gone)
+    // Using more recent and actively maintained models
     const models = [
-      'distilbert-base-uncased-finetuned-sst-2-english',
       'cardiffnlp/twitter-roberta-base-sentiment-latest',
-      'nlptown/bert-base-multilingual-uncased-sentiment',
+      'SamLowe/roberta-base-go_emotions',
+      'j-hartmann/emotion-english-distilroberta-base',
+      'distilbert-base-uncased-finetuned-sst-2-english', // Keep as last fallback
     ];
 
     let lastError: Error | null = null;
