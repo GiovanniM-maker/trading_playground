@@ -88,21 +88,6 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
     }
   };
 
-  const handleRefreshNews = async () => {
-    try {
-      const response = await fetch('/api/news?refresh=true');
-      if (!response.ok) throw new Error('Failed to refresh news');
-      
-      const data = await response.json();
-      alert(`News refreshed: ${data.count} articles fetched`);
-      
-      // Refresh status after refreshing
-      setTimeout(() => fetchStatus(), 1000);
-    } catch (error) {
-      console.error('Error refreshing news:', error);
-      alert('Failed to refresh news');
-    }
-  };
 
   const handleExport = () => {
     const report = {
@@ -218,15 +203,6 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
             >
               <RefreshCw size={16} className={cn(loading && "animate-spin")} />
               Retry All
-            </button>
-
-            <button
-              onClick={handleRefreshNews}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={16} className={cn(loading && "animate-spin")} />
-              Force Refresh News
             </button>
 
             <button

@@ -1,6 +1,7 @@
 import { getCache, setCache } from './redis';
 import { createHash } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
 export const COINS = [
   { id: 'bitcoin', symbol: 'BTC' },
@@ -105,22 +106,26 @@ function sanitizeSeries(series: RawPoint[]): RawPoint[] {
   return series.filter(s => s.p >= min && s.p <= max && s.p > 0);
 }
 
-// Fetch from CoinGecko
-export async function fetchGeckoHistory(id: string): Promise<RawPoint[]> {
-  try {
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=max`,
-      {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
+// Fetch from CoinGecko (limited range)
+export async function fetchGeckoHistory(id: string, days = 7): Promise<RawPoint[] | null> {
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - days * 86400;
+  
+  // Use range endpoint for better control
+  const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart/range?vs_currency=usd&from=${from}&to=${now}`;
+  
+  const response = await fetchWithTimeout(url, 10000, {
+    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+  });
 
-    if (!response.ok) throw new Error(`CoinGecko HTTP ${response.status}`);
-    
+  if (!response) {
+    return null;
+  }
+
+  try {
     const data = await response.json();
     if (!data.prices || !Array.isArray(data.prices)) {
-      throw new Error('Invalid CoinGecko response');
+      return null;
     }
 
     // CoinGecko returns timestamps in milliseconds and prices in USD
@@ -131,42 +136,41 @@ export async function fetchGeckoHistory(id: string): Promise<RawPoint[]> {
       }))
     );
 
-    // Verification logging
     if (normalized.length > 0) {
-      const min = Math.min(...normalized.map(p => p.p));
-      const max = Math.max(...normalized.map(p => p.p));
-      const sample = normalized.slice(0, 3);
-      console.log(`[CoinGecko ${id}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+      console.log(`[CoinGecko ${id}] Fetched ${normalized.length} points for ${days} days`);
     }
 
     return normalized;
   } catch (error) {
-    console.error(`Error fetching CoinGecko history for ${id}:`, error);
-    throw error;
+    console.error(`Error parsing CoinGecko response for ${id}:`, error);
+    return null;
   }
 }
 
-// Fetch from CryptoCompare
-export async function fetchCompareHistory(symbol: string): Promise<RawPoint[]> {
-  try {
-    // Ensure tsym=USD for USD prices
-    const response = await fetch(
-      `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&allData=true`,
-      {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
+// Fetch from CryptoCompare (limited range)
+export async function fetchCompareHistory(symbol: string, days = 7): Promise<RawPoint[] | null> {
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - days * 86400;
+  
+  // CryptoCompare limit endpoint accepts limit parameter
+  const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${symbol}&tsym=USD&limit=${days}&toTs=${now}`;
+  
+  const response = await fetchWithTimeout(url, 10000, {
+    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+  });
 
-    if (!response.ok) throw new Error(`CryptoCompare HTTP ${response.status}`);
-    
+  if (!response) {
+    return null;
+  }
+
+  try {
     const data = await response.json();
     if (data.Response === 'Error') {
-      throw new Error(data.Message || 'CryptoCompare API error');
+      return null;
     }
 
     if (!data.Data || !data.Data.Data || !Array.isArray(data.Data.Data)) {
-      throw new Error('Invalid CryptoCompare response');
+      return null;
     }
 
     // CryptoCompare returns timestamps in seconds and prices in USD
@@ -177,42 +181,44 @@ export async function fetchCompareHistory(symbol: string): Promise<RawPoint[]> {
       }))
     );
 
-    // Verification logging
     if (normalized.length > 0) {
-      const min = Math.min(...normalized.map(p => p.p));
-      const max = Math.max(...normalized.map(p => p.p));
-      const sample = normalized.slice(0, 3);
-      console.log(`[CryptoCompare ${symbol}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+      console.log(`[CryptoCompare ${symbol}] Fetched ${normalized.length} points for ${days} days`);
     }
 
     return normalized;
   } catch (error) {
-    console.error(`Error fetching CryptoCompare history for ${symbol}:`, error);
-    throw error;
+    console.error(`Error parsing CryptoCompare response for ${symbol}:`, error);
+    return null;
   }
 }
 
-// Fetch from CoinPaprika (optional fallback)
-export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null> {
+// Fetch from CoinPaprika (limited range, optional fallback)
+export async function fetchPaprikaHistory(id: string, days = 7): Promise<RawPoint[] | null> {
+  const symbol = symbolFromGeckoId(id);
+  if (!symbol) return null;
+
+  // Calculate start date
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  const startStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+  const url = `https://api.coinpaprika.com/v1/tickers/${symbol.toLowerCase()}/historical?start=${startStr}&limit=${days * 2}`;
+  
+  const response = await fetchWithTimeout(url, 10000, {
+    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+  });
+
+  if (!response) {
+    return null;
+  }
+
   try {
-    // CoinPaprika uses symbol-based IDs
-    const symbol = symbolFromGeckoId(id);
-    if (!symbol) return null;
-
-    const response = await fetch(
-      `https://api.coinpaprika.com/v1/tickers/${symbol.toLowerCase()}/historical?start=2013-04-28&limit=5000`,
-      {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-
-    if (!response.ok) return null; // Silently ignore rate limits
-    
     const data = await response.json();
-    if (!Array.isArray(data)) return null;
+    if (!Array.isArray(data)) {
+      return null;
+    }
 
-    // CoinPaprika returns ISO timestamps and prices in USD (quotes.USD.price)
+    // CoinPaprika returns ISO timestamps and prices in USD
     const normalized = await normalizeTimestamps(
       data.map((item: any) => ({
         t: new Date(item.timestamp).getTime(), // Convert ISO to ms
@@ -220,18 +226,14 @@ export async function fetchPaprikaHistory(id: string): Promise<RawPoint[] | null
       }))
     );
 
-    // Verification logging
     if (normalized.length > 0) {
-      const min = Math.min(...normalized.map(p => p.p));
-      const max = Math.max(...normalized.map(p => p.p));
-      const sample = normalized.slice(0, 3);
-      console.log(`[CoinPaprika ${symbol}] Normalized: ${normalized.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, sample:`, sample);
+      console.log(`[CoinPaprika ${symbol}] Fetched ${normalized.length} points for ${days} days`);
     }
 
     return normalized;
   } catch (error) {
     console.warn(`CoinPaprika history fetch failed for ${id}:`, error);
-    return null; // Silently ignore
+    return null;
   }
 }
 
@@ -424,12 +426,29 @@ export async function fuseSources(
   };
 }
 
-// Save history to Redis (chunked by year)
+// Save history to Redis (optimized with conditional compression and checksum skip)
 export async function saveHistory(
   symbol: string,
   series: FusedSeries,
-  updateInfo?: { updated_days?: number }
+  updateInfo?: { updated_days?: number },
+  force = false
 ): Promise<void> {
+  // Check if data is unchanged (skip write if checksum matches and not forcing)
+  if (!force) {
+    const existingMeta = await getCache(`history:${symbol}:v1:meta`);
+    if (existingMeta && typeof existingMeta === 'object') {
+      const existingChecksum = existingMeta.checksum as string | undefined;
+      if (existingChecksum === series.checksum) {
+        console.log(`[Save ${symbol}] Skipping write - checksum unchanged`);
+        return;
+      }
+    }
+  }
+
+  // Calculate days span for compression decision
+  const daysSpan = (series.to - series.from) / (1000 * 60 * 60 * 24);
+  const shouldCompress = daysSpan >= 30;
+
   // Group points by year
   const byYear = new Map<number, FusedPoint[]>();
   
@@ -443,12 +462,19 @@ export async function saveHistory(
 
   const years = Array.from(byYear.keys()).sort();
 
-  // Save chunks
+  // Save chunks (with conditional compression)
   for (const year of years) {
     const points = byYear.get(year)!;
     const json = JSON.stringify(points);
-    const compressed = gzipSync(json);
-    const encoded = Buffer.from(compressed).toString('base64');
+    
+    let encoded: string;
+    if (shouldCompress) {
+      const compressed = gzipSync(json);
+      encoded = Buffer.from(compressed).toString('base64');
+    } else {
+      // For short ranges (<30d), store as plain JSON (faster)
+      encoded = json;
+    }
     
     const key = `history:${symbol}:v1:year:${year}`;
     await setCache(key, encoded, 0); // No TTL
@@ -473,12 +499,14 @@ export async function saveHistory(
     checksum: series.checksum,
     last_updated: Date.now(),
     updated_days: updateInfo?.updated_days || existingMeta?.updated_days || 0,
+    compressed: shouldCompress,
   };
 
   await setCache(`history:${symbol}:v1:meta`, meta, 0);
+  console.log(`[Save ${symbol}] Saved ${series.points.length} points${shouldCompress ? ' (compressed)' : ''}`);
 }
 
-// Load history from Redis
+// Load history from Redis (handles both compressed and uncompressed)
 export async function loadHistory(symbol: string): Promise<FusedSeries | null> {
   // Load metadata
   const meta = await getCache(`history:${symbol}:v1:meta`);
@@ -491,6 +519,8 @@ export async function loadHistory(symbol: string): Promise<FusedSeries | null> {
     return null;
   }
 
+  const isCompressed = meta.compressed as boolean | undefined;
+
   // Load and decompress chunks
   const allPoints: FusedPoint[] = [];
   
@@ -499,12 +529,21 @@ export async function loadHistory(symbol: string): Promise<FusedSeries | null> {
     if (typeof encoded !== 'string') continue;
 
     try {
-      const compressed = Buffer.from(encoded, 'base64');
-      const json = gunzipSync(compressed).toString();
-      const points = JSON.parse(json) as FusedPoint[];
+      let points: FusedPoint[];
+      
+      if (isCompressed) {
+        // Decompress if compressed
+        const compressed = Buffer.from(encoded, 'base64');
+        const json = gunzipSync(compressed).toString();
+        points = JSON.parse(json) as FusedPoint[];
+      } else {
+        // Direct parse if not compressed
+        points = JSON.parse(encoded) as FusedPoint[];
+      }
+      
       allPoints.push(...points);
     } catch (error) {
-      console.error(`Error decompressing chunk for ${symbol} year ${year}:`, error);
+      console.error(`Error loading chunk for ${symbol} year ${year}:`, error);
     }
   }
 
@@ -576,8 +615,12 @@ export function sliceRange(
   };
 }
 
-// Backfill a single symbol (CoinGecko only)
-export async function backfillSymbol(symbol: string, force = false): Promise<FusedSeries> {
+// Backfill a single symbol (optimized with early return on first successful source)
+export async function backfillSymbol(
+  symbol: string,
+  days = 7,
+  force = false
+): Promise<FusedSeries> {
   // Check if exists and not forcing
   if (!force) {
     const existing = await loadHistory(symbol);
@@ -591,40 +634,50 @@ export async function backfillSymbol(symbol: string, force = false): Promise<Fus
     throw new Error(`Unknown symbol: ${symbol}`);
   }
 
-  // Fetch from CoinGecko only (authoritative source)
-  const points = await fetchGeckoHistory(id);
-  
-  if (points.length === 0) {
-    throw new Error(`No data available from CoinGecko for ${symbol}`);
+  // Try sources in order with early return on first success
+  const sources = [
+    { name: 'CoinGecko', fn: () => fetchGeckoHistory(id, days) },
+    { name: 'CryptoCompare', fn: () => fetchCompareHistory(symbol, days) },
+    { name: 'CoinPaprika', fn: () => fetchPaprikaHistory(id, days) },
+  ];
+
+  for (const source of sources) {
+    const points = await source.fn();
+    
+    if (points && points.length > 0) {
+      // Convert to FusedSeries format
+      const fused: FusedSeries = {
+        symbol,
+        from: points[0].t,
+        to: points[points.length - 1].t,
+        points: points.map(p => ({ t: p.t, p: p.p, c: 1.0 })),
+        sources_used: [source.name],
+        confidence: 1.0,
+        version: 1,
+        checksum: createHash('sha256')
+          .update(JSON.stringify(points.map(p => ({ t: p.t, p: p.p, c: 1.0 }))))
+          .digest('hex')
+          .substring(0, 16),
+      };
+
+      await saveHistory(symbol, fused, undefined, force);
+      
+      // Log the backfill
+      await logHistoryUpdate(symbol, {
+        action: 'backfill',
+        points: fused.points.length,
+        from: fused.from,
+        to: fused.to,
+        source: source.name,
+        timestamp: Date.now(),
+      });
+
+      console.log(`[Backfill ${symbol}] Success using ${source.name}, ${fused.points.length} points`);
+      return fused;
+    }
   }
 
-  // Convert to FusedSeries format with confidence 1.0 (CoinGecko is authoritative)
-  const fused: FusedSeries = {
-    symbol,
-    from: points[0].t,
-    to: points[points.length - 1].t,
-    points: points.map(p => ({ t: p.t, p: p.p, c: 1.0 })),
-    sources_used: ['CoinGecko'],
-    confidence: 1.0,
-    version: 1,
-    checksum: createHash('sha256')
-      .update(JSON.stringify(points.map(p => ({ t: p.t, p: p.p, c: 1.0 }))))
-      .digest('hex')
-      .substring(0, 16),
-  };
-
-  await saveHistory(symbol, fused);
-  
-  // Log the backfill
-  await logHistoryUpdate(symbol, {
-    action: 'backfill',
-    points: fused.points.length,
-    from: fused.from,
-    to: fused.to,
-    timestamp: Date.now(),
-  });
-
-  return fused;
+  throw new Error(`No valid data available for ${symbol} from any source`);
 }
 
 // Refresh history for a symbol (fetch last N days from CoinGecko and merge)
@@ -660,30 +713,14 @@ export async function refreshHistory(
   }
 
   try {
-    // Fetch last N days from CoinGecko
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
-      {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-
-    if (!response.ok) throw new Error(`CoinGecko HTTP ${response.status}`);
+    // Fetch last N days from CoinGecko using optimized function
+    const newRawPoints = await fetchGeckoHistory(id, days);
     
-    const data = await response.json();
-    if (!data.prices || !Array.isArray(data.prices)) {
-      throw new Error('Invalid CoinGecko response');
+    if (!newRawPoints || newRawPoints.length === 0) {
+      throw new Error(`No data available from CoinGecko for ${symbol}`);
     }
 
-    // Normalize new points
-    const newRawPoints = await normalizeTimestamps(
-      data.prices.map(([t, p]: [number, number]) => ({
-        t,
-        p: Math.round(p * 100) / 100,
-      }))
-    );
-
+    // Points are already normalized from fetchGeckoHistory
     const newPoints: FusedPoint[] = newRawPoints.map(p => ({
       t: p.t,
       p: p.p,
@@ -778,6 +815,7 @@ async function logHistoryUpdate(
     updated_days?: number;
     from?: number;
     to?: number;
+    source?: string;
     timestamp: number;
   }
 ): Promise<void> {
@@ -804,22 +842,35 @@ async function logHistoryUpdate(
   }
 }
 
-// Backfill all symbols
-export async function backfillAll(force = false): Promise<Array<{ symbol: string; ok: boolean; error?: string }>> {
-  const results: Array<{ symbol: string; ok: boolean; error?: string }> = [];
-
-  for (const coin of COINS) {
-    try {
-      await backfillSymbol(coin.symbol, force);
-      results.push({ symbol: coin.symbol, ok: true });
-    } catch (error) {
-      results.push({
-        symbol: coin.symbol,
-        ok: false,
+// Backfill all symbols (parallel fetching)
+export async function backfillAll(
+  days = 7,
+  force = false
+): Promise<Array<{ symbol: string; status: string; error?: string }>> {
+  const symbols = COINS.map(c => c.symbol);
+  
+  // Fetch all in parallel
+  const jobs = symbols.map(symbol => 
+    backfillSymbol(symbol, days, force)
+      .then(() => ({ symbol, status: 'ok' as const }))
+      .catch(error => ({
+        symbol,
+        status: 'error' as const,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-  }
+      }))
+  );
 
-  return results;
+  const results = await Promise.allSettled(jobs);
+  
+  return results.map((r, i) => {
+    if (r.status === 'fulfilled') {
+      return r.value;
+    } else {
+      return {
+        symbol: symbols[i],
+        status: 'error' as const,
+        error: r.reason?.message || 'Unknown error',
+      };
+    }
+  });
 }

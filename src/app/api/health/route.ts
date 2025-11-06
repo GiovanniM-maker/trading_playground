@@ -5,7 +5,6 @@ import {
   checkLocalNews,
   checkHuggingFace,
   checkMarketAPI,
-  checkNewsAPI,
   checkRedisLatency,
   checkVercelEnv,
   checkGitHub,
@@ -35,9 +34,6 @@ export async function GET(request: Request) {
           break;
         case 'market':
           result = await checkMarketAPI(baseUrl);
-          break;
-        case 'news':
-          result = await checkNewsAPI(baseUrl);
           break;
         case 'redis-latency':
           result = await checkRedisLatency();

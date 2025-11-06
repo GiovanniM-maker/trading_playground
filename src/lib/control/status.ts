@@ -1,4 +1,4 @@
-import { checkRedis, checkLocalNews, checkHuggingFace, checkMarketAPI, checkNewsAPI, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
+import { checkRedis, checkLocalNews, checkHuggingFace, checkMarketAPI, checkRedisLatency, checkVercelEnv, checkGitHub, HealthCheckResult } from '../healthChecks';
 import { logEvent, LogEntry } from './logs';
 
 export interface ServiceStatus {
@@ -189,7 +189,6 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     localNews,
     huggingface,
     market,
-    news,
     vercelEnv,
     github,
   ] = await Promise.allSettled([
@@ -202,7 +201,6 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
-    checkNewsAPI(baseUrl),
     checkVercelEnv(),
     checkGitHub(),
   ]);
@@ -210,35 +208,50 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
   // Convert health check results to service statuses
   const services: Record<string, ServiceStatus> = {};
 
-  // Sentiment API check
-  if (sentimentCheck[0].status === 'fulfilled') {
-    const sentimentResult = sentimentCheck[0].value;
-    
-    // Determine status based on response
-    let finalStatus: 'OK' | 'ERROR' | 'WARNING' = sentimentResult.status;
-    if (sentimentResult.code === 401 || sentimentResult.code === 403) {
-      finalStatus = 'WARNING'; // Show as warning for missing API key
-    }
-    
-    services['Sentiment API'] = {
-      name: 'Sentiment API',
-      status: finalStatus,
-      latency: sentimentResult.latency || 0,
-      code: sentimentResult.code,
+  // Unified Sentiment System check (merges Sentiment API and Hugging Face)
+  const sentimentResult = sentimentCheck[0].status === 'fulfilled' ? sentimentCheck[0].value : null;
+  const huggingFaceResult = huggingface.status === 'fulfilled' ? huggingface.value : null;
+
+  // Merge Sentiment API and Hugging Face into single "Sentiment System" card
+  if (sentimentResult || huggingFaceResult) {
+    // Prefer sentiment API result, fallback to Hugging Face check
+    const result = sentimentResult || {
+      name: 'Sentiment System',
+      status: huggingFaceResult?.status === 'ok' ? 'OK' : huggingFaceResult?.status === 'warning' ? 'WARNING' : 'ERROR',
+      latency: huggingFaceResult?.latency || 0,
+      code: undefined,
       json: {
-        ...sentimentResult.json,
-        model: sentimentResult.json?.model || 'kk08/CryptoBERT',
+        model: huggingFaceResult?.details?.model || process.env.HF_MODEL || 'kk08/CryptoBERT',
+        status: huggingFaceResult?.details?.status || 'UNKNOWN',
       },
-      error: sentimentResult.error,
-      lastUpdate: sentimentResult.lastUpdate,
+      error: huggingFaceResult?.message,
+      lastUpdate: new Date(huggingFaceResult?.timestamp || Date.now()).toISOString(),
+    };
+
+    const finalStatus: 'OK' | 'ERROR' | 'WARNING' = 
+      (result.status === 'OK' || (typeof result.status === 'string' && result.status.toLowerCase() === 'ok')) ? 'OK' :
+      (result.status === 'ERROR' || (typeof result.status === 'string' && result.status.toLowerCase() === 'error')) ? 'ERROR' :
+      'WARNING';
+    
+    services['Sentiment System'] = {
+      name: 'Sentiment System',
+      status: finalStatus,
+      latency: result.latency || 0,
+      code: result.code,
+      json: {
+        ...result.json,
+        model: result.json?.model || process.env.HF_MODEL || 'kk08/CryptoBERT',
+      },
+      error: result.error,
+      lastUpdate: result.lastUpdate,
     };
 
     // Log the event
-    await logEvent('Sentiment API', {
+    await logEvent('Sentiment System', {
       timestamp: Date.now(),
-      status: finalStatus === 'OK' ? 'OK' : finalStatus === 'WARNING' ? 'WARNING' : 'ERROR',
-      latency: sentimentResult.latency || 0,
-      message: sentimentResult.error || (sentimentResult.json?.model ? `OK - ${sentimentResult.json.model}` : 'OK'),
+      status: finalStatus,
+      latency: result.latency || 0,
+      message: result.error || (result.json?.model ? `OK - ${result.json.model}` : 'OK'),
     });
   }
 
@@ -256,23 +269,23 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     services['CryptoCompare'] = compare.value;
   }
 
-  // Health check services
+  // Health check services (excluding Hugging Face - merged into Sentiment System above)
   const healthChecks: Array<{ name: string; result: HealthCheckResult | null }> = [
     { name: 'Redis', result: redisHealth.status === 'fulfilled' ? redisHealth.value : null },
     { name: 'Redis Latency', result: redisLatency.status === 'fulfilled' ? redisLatency.value : null },
     { name: 'Local News', result: localNews.status === 'fulfilled' ? localNews.value : null },
-    { name: 'Hugging Face', result: huggingface.status === 'fulfilled' ? huggingface.value : null },
     { name: 'Market API', result: market.status === 'fulfilled' ? market.value : null },
-    { name: 'News API', result: news.status === 'fulfilled' ? news.value : null },
     { name: 'Vercel Environment', result: vercelEnv.status === 'fulfilled' ? vercelEnv.value : null },
     { name: 'GitHub Sync', result: github.status === 'fulfilled' ? github.value : null },
   ];
 
   for (const { name, result } of healthChecks) {
     if (result) {
+      const status: 'OK' | 'ERROR' | 'WARNING' = result.status === 'ok' ? 'OK' : result.status === 'warning' ? 'WARNING' : 'ERROR';
+      
       services[name] = {
         name,
-        status: result.status === 'ok' ? 'OK' : result.status === 'warning' ? 'WARNING' : 'ERROR',
+        status,
         latency: result.latency,
         code: undefined,
         error: result.status !== 'ok' ? result.message : undefined,

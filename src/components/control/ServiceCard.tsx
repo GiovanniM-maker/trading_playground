@@ -69,19 +69,33 @@ export function ServiceCard({
     return `${hours}h ago`;
   };
 
+  const isSentimentSystem = name === 'Sentiment System' || name === 'Hugging Face';
+  const isDisabled = isSentimentSystem && json?.status === 'DISABLED';
+  
   return (
     <div
       onClick={onClick}
       className={cn(
         "p-4 border rounded-xl cursor-pointer transition-all min-h-[180px] flex flex-col",
-        getStatusColor()
+        getStatusColor(),
+        isDisabled && "opacity-60"
       )}
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          {getStatusIcon()}
+          {isSentimentSystem ? (
+            // Show emoji status for Sentiment System
+            <span className="text-lg">
+              {json?.status === 'DISABLED' ? '⚪' :
+               json?.status === 'OK' || status === 'OK' ? '🟢' :
+               json?.status === 'AUTH_ERROR' || (json?.status && json.status !== 'OK' && status === 'ERROR') ? '🟡' :
+               status === 'ERROR' ? '🔴' : '🟡'}
+            </span>
+          ) : (
+            getStatusIcon()
+          )}
           <h3 className="text-base font-semibold text-[#f5f5e8] truncate">
-            {name}
+            {isSentimentSystem && isDisabled ? `${name} (Disabled)` : name}
           </h3>
           {status === 'OK' && (
             <div className="w-2 h-2 rounded-full bg-[#00b686] animate-pulse ml-auto flex-shrink-0" />
@@ -143,7 +157,23 @@ export function ServiceCard({
           <div className="flex items-center justify-between">
             <span className="text-[#a9a9a9]">Model:</span>
             <span className="text-[#f5f5e8] text-xs truncate" title={json.model}>
-              {json.model.split('/').pop()}
+              {json.model}
+            </span>
+          </div>
+        )}
+        {isSentimentSystem && isDisabled && (
+          <div className="flex items-center justify-between pt-2 border-t border-[#222]">
+            <span className="text-[#a9a9a9] text-xs">Status:</span>
+            <span className="text-[#a9a9a9] text-xs italic">
+              Disabled — re-enable by adding HUGGINGFACE_API_KEY
+            </span>
+          </div>
+        )}
+        {isSentimentSystem && json?.model && !isDisabled && (
+          <div className="flex items-center justify-between">
+            <span className="text-[#a9a9a9]">Model:</span>
+            <span className="text-[#f5f5e8] text-xs truncate" title={json.model}>
+              {json.model}
             </span>
           </div>
         )}

@@ -72,24 +72,8 @@ export default function MarketPage() {
   };
 
   const fetchNews = async () => {
-    try {
-      const response = await fetch(`/api/news?symbol=${selectedCoin.symbol}`);
-      if (!response.ok) throw new Error('Failed to fetch news');
-      
-      const data = await response.json();
-      const newsItems: NewsItem[] = (data.results || [])
-        .slice(0, 10)
-        .map((item: any) => ({
-          title: item.title,
-          url: item.url,
-          source: item.source || 'Unknown',
-          sentiment: item.sentiment || item.sentiment_label || 'Neutral',
-          published_at: item.published_at || new Date().toISOString(),
-        }));
-      setNews(newsItems);
-    } catch (error) {
-      console.error('Error fetching news:', error);
-    }
+    // News API disabled
+    setNews([]);
   };
 
   const fetchHistory = async (range: string = timeRange) => {
@@ -125,7 +109,6 @@ export default function MarketPage() {
     const loadData = async () => {
       setLoading(true);
       await fetchMarketData();
-      await fetchNews();
       await fetchHistory('all'); // Load full history initially
       setLoading(false);
     };
@@ -135,7 +118,6 @@ export default function MarketPage() {
     // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
       fetchMarketData();
-      fetchNews();
     }, 30000);
 
     return () => clearInterval(interval);

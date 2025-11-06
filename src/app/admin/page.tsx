@@ -66,7 +66,6 @@ export default function AdminPage() {
       'Redis': 'redis',
       'Hugging Face API': 'huggingface',
       'Market API': 'market',
-      'News API': 'news',
       'Redis Latency': 'redis-latency',
       'Vercel Environment': 'vercel-env',
       'GitHub Sync': 'github',
@@ -103,7 +102,17 @@ export default function AdminPage() {
     return () => clearInterval(interval);
   }, [autoRefresh, runChecks]);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, serviceName?: string, details?: any) => {
+    // Special handling for Sentiment System / Hugging Face
+    if (serviceName === 'Sentiment System' || serviceName === 'Hugging Face API') {
+      const hfStatus = details?.status;
+      if (hfStatus === 'DISABLED') return '⚪';
+      if (hfStatus === 'OK' || status === 'ok') return '🟢';
+      if (hfStatus === 'AUTH_ERROR') return '🟡';
+      if (status === 'error') return '🔴';
+      return '🟡';
+    }
+    
     switch (status) {
       case 'ok':
         return '🟢';
@@ -268,6 +277,37 @@ export default function AdminPage() {
               Run Full Diagnostics
             </button>
             
+            <button
+              onClick={async () => {
+                try {
+                  setLoading(true);
+                  const response = await fetch('/api/sentiment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: 'Bitcoin surges today' }),
+                  });
+                  
+                  if (!response.ok) throw new Error('Sentiment test failed');
+                  
+                  const data = await response.json();
+                  alert(`Sentiment Test Result:\n\nLabel: ${data.label}\nScore: ${data.score}\nModel: ${data.model || 'Unknown'}\nLatency: ${data.latency_ms}ms`);
+                  
+                  // Refresh checks after test
+                  setTimeout(() => runChecks(), 1000);
+                } catch (error) {
+                  console.error('Error testing sentiment:', error);
+                  alert('Failed to test sentiment. Check console for details.');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={cn(loading && "animate-spin")} />
+              Test Sentiment
+            </button>
+            
               <button
                 onClick={exportReport}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors"
@@ -300,18 +340,29 @@ export default function AdminPage() {
                 key={result.service}
                 className={cn(
                   "bg-[#181818] border p-4 transition-all",
-                  getStatusColor(result.status)
+                  getStatusColor(result.status),
+                  (result.service === 'Sentiment System' || result.service === 'Hugging Face API') && result.details?.status === 'DISABLED' && "opacity-60"
                 )}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">{getStatusBadge(result.status)}</span>
+                      <span className="text-lg">{getStatusBadge(result.status, result.service, result.details)}</span>
                       <h3 className="text-sm font-semibold text-[#f5f5e8]">
-                        {result.service}
+                        {result.service === 'Hugging Face API' ? 'Sentiment System' : result.service}
                       </h3>
                     </div>
                     <p className="text-xs text-[#a9a9a9] mb-2">{result.message}</p>
+                    {(result.service === 'Sentiment System' || result.service === 'Hugging Face API') && result.details?.status === 'DISABLED' && (
+                      <p className="text-xs text-[#a9a9a9] mb-2 italic">
+                        Disabled for now — re-enable by adding HUGGINGFACE_API_KEY.
+                      </p>
+                    )}
+                    {(result.service === 'Sentiment System' || result.service === 'Hugging Face API') && result.details?.model && result.details?.status !== 'DISABLED' && (
+                      <p className="text-xs text-[#a9a9a9] mb-2">
+                        Model: {result.details.model}
+                      </p>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className={cn(
                         "text-xs font-medium",
@@ -375,11 +426,6 @@ export default function AdminPage() {
             Running initial health checks...
           </div>
         )}
-
-        {/* History Panel */}
-        <div className="mt-8">
-          <HistoryPanel />
-        </div>
       </main>
     </div>
   );

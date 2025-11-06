@@ -1,40 +1,14 @@
 import { NextResponse } from 'next/server';
-import { analyzeSentiment, SentimentResult } from '@/lib/sentiment';
-import { logSentiment } from '@/lib/sentiment/logs';
+import { analyzeSentiment } from '@/lib/sentiment';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-interface SentimentRequest {
-  text: string;
-}
-
-interface SentimentResponse {
-  label: 'positive' | 'neutral' | 'negative';
-  score: number;
-  model: string;
-  latency_ms: number;
-  timestamp: string;
-  logId?: string;
-}
-
-function convertLabel(label: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'): 'positive' | 'neutral' | 'negative' {
-  switch (label) {
-    case 'POSITIVE':
-      return 'positive';
-    case 'NEGATIVE':
-      return 'negative';
-    case 'NEUTRAL':
-    default:
-      return 'neutral';
-  }
-}
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const body: SentimentRequest = await request.json();
+    const { text } = await req.json();
 
-    if (!body.text || typeof body.text !== 'string' || body.text.trim().length === 0) {
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return NextResponse.json(
         { error: 'Text is required and must be a non-empty string' },
         { status: 400 }
@@ -42,34 +16,27 @@ export async function POST(request: Request) {
     }
 
     // Limit text length to prevent abuse
-    const text = body.text.trim().substring(0, 2000);
+    const trimmedText = text.trim().substring(0, 2000);
 
-    // Analyze sentiment
-    const result: SentimentResult = await analyzeSentiment(text);
+    // Single call to analyzeSentiment
+    const result = await analyzeSentiment(trimmedText);
 
-    // Convert label format
-    const label = convertLabel(result.label);
-    const score = parseFloat(result.score.toFixed(4)); // Round to 4 decimals
+    // Convert label format for API response
+    const label = result.label === 'POSITIVE' 
+      ? 'positive' 
+      : result.label === 'NEGATIVE'
+      ? 'negative'
+      : 'neutral';
 
-    // Log to Redis
-    const logEntry = await logSentiment(text, label, score);
-
-    const response: SentimentResponse = {
+    return NextResponse.json({
       label,
-      score,
-      model: result.model || 'kk08/CryptoBERT',
+      score: result.score,
+      model: result.model || 'unknown',
       latency_ms: result.latency_ms || 0,
       timestamp: new Date().toISOString(),
-      logId: logEntry.id,
-    };
-
-    // Add latency header for monitoring
-    const nextResponse = NextResponse.json(response);
-    if (result.latency_ms) {
-      nextResponse.headers.set('X-Latency', result.latency_ms.toString());
-    }
-
-    return nextResponse;
+      ...(result.error && { error: result.error }),
+      ...(result.disabled && { disabled: true }),
+    });
   } catch (error) {
     console.error('Error in sentiment API:', error);
     return NextResponse.json(
@@ -84,9 +51,10 @@ export async function POST(request: Request) {
 
 // Allow GET for health checks
 export async function GET() {
+  const DEFAULT_MODEL = process.env.HF_MODEL || "kk08/CryptoBERT";
   return NextResponse.json({
     status: 'ok',
-    model: 'kk08/CryptoBERT',
+    model: DEFAULT_MODEL,
     message: 'Sentiment analysis API is running',
     timestamp: new Date().toISOString(),
   });

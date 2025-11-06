@@ -211,19 +211,26 @@ export async function checkLocalNews(): Promise<HealthCheckResult> {
 export async function checkHuggingFace(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
-    const { hfRequest, isHFConfigured } = await import('./hf/client');
-    const { getCache, setCache } = await import('./redis');
+    const { isHFConfigured } = await import('./hf/client');
     
     if (!isHFConfigured()) {
+      console.log("Sentiment disabled");
       return {
         service: 'Hugging Face API',
         status: 'warning',
         latency: 0,
-        message: 'Not configured - API key missing',
+        message: 'Disabled - API key missing',
         timestamp: Date.now(),
-        details: { status: 'NOT_CONFIGURED' },
+        details: { 
+          status: 'DISABLED',
+          disabled: true,
+          logs: ['Sentiment API disabled'],
+        },
       };
     }
+    
+    const { hfRequest } = await import('./hf/client');
+    const { getCache, setCache } = await import('./redis');
 
     // Check if there's a cached AUTH_ERROR status
     try {
@@ -242,69 +249,98 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       // Ignore cache errors
     }
 
-    // Try models in order (same as sentiment.ts)
-    const models = ["kk08/CryptoBERT", "cardiffnlp/twitter-roberta-base-sentiment-latest"];
-    let lastError: Error | null = null;
-    let successfulModel: string | null = null;
-    let successfulResult: any = null;
-
-    for (const model of models) {
-      try {
-        const data = await hfRequest(model, { inputs: 'Bitcoin is rising!' }, { timeout: 10000 });
-        
-        // Parse response
-        let result: any;
-        if (Array.isArray(data) && data.length > 0) {
-          result = Array.isArray(data[0]) ? data[0] : data;
-        } else if (data && typeof data === 'object') {
-          result = data;
-        } else {
-          throw new Error('Invalid response format');
-        }
-
-        successfulModel = model;
-        successfulResult = result;
-        break;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('Unknown error');
-        
-        // Check if it's an auth error - don't retry other models
-        if (lastError.message.includes('401') || lastError.message.includes('403') || 
-            lastError.message.includes('Unauthorized') || lastError.message.includes('Forbidden')) {
-          // Store AUTH_ERROR status
-          try {
-            await setCache('hf:status', { status: 'AUTH_ERROR', timestamp: Date.now() }, 3600);
-            const { logError } = await import('./errors/logs');
-            await logError('Hugging Face', lastError.message, lastError.message.includes('401') ? 401 : 403);
-          } catch {
-            // Ignore logging errors
-          }
-          
-          const latency = Date.now() - startTime;
-          return {
-            service: 'Hugging Face API',
-            status: 'error',
-            latency,
-            message: `Authentication failed (${lastError.message.includes('401') ? '401' : '403'}) - check API key`,
-            timestamp: Date.now(),
-            details: { 
-              status: 'AUTH_ERROR',
-              model: model.split('/').pop(),
-              error: lastError.message,
-            },
-          };
-        }
-        
-        // For other errors, try next model
-        console.warn(`[Health Check] Model ${model} failed:`, lastError.message);
-      }
-    }
-
-    if (!successfulModel || !successfulResult) {
-      const latency = Date.now() - startTime;
-      const errorMessage = lastError?.message || 'All models failed';
+    // Use unified single model (same as sentiment.ts)
+    const DEFAULT_MODEL = process.env.HF_MODEL || "kk08/CryptoBERT";
+    
+    try {
+      const data = await hfRequest(DEFAULT_MODEL, { inputs: 'Bitcoin is rising!' }, { timeout: 10000 });
       
-      // Log error
+      // Parse response - normalize output
+      const [label, score] = data?.[0]?.[0]
+        ? [data[0][0].label, data[0][0].score]
+        : data?.[0]?.label && data?.[0]?.score
+        ? [data[0].label, data[0].score]
+        : ["neutral", 0.5];
+
+      const latency = Date.now() - startTime;
+
+      // Clear AUTH_ERROR status on success
+      try {
+        await setCache('hf:status', { status: 'OK', model: DEFAULT_MODEL, timestamp: Date.now() }, 3600);
+      } catch {
+        // Ignore cache errors
+      }
+
+      return {
+        service: 'Hugging Face API',
+        status: 'ok',
+        latency,
+        message: `Working with model: ${DEFAULT_MODEL.split('/').pop()}`,
+        timestamp: Date.now(),
+        details: { 
+          status: 'OK',
+          model: DEFAULT_MODEL.split('/').pop(),
+          label: label || 'N/A',
+          score: score || 0,
+          latency_ms: latency,
+        },
+      };
+    } catch (error) {
+      const lastError = error instanceof Error ? error : new Error('Unknown error');
+      
+      // Check if it's an auth error
+      if (lastError.message.includes('401') || lastError.message.includes('403') || 
+          lastError.message.includes('Unauthorized') || lastError.message.includes('Forbidden')) {
+        // Store AUTH_ERROR status
+        try {
+          await setCache('hf:status', { status: 'AUTH_ERROR', timestamp: Date.now() }, 3600);
+          const { logError } = await import('./errors/logs');
+          await logError('Hugging Face', lastError.message, lastError.message.includes('401') ? 401 : 403);
+        } catch {
+          // Ignore logging errors
+        }
+        
+        const latency = Date.now() - startTime;
+        return {
+          service: 'Hugging Face API',
+          status: 'error',
+          latency,
+          message: `Authentication failed (${lastError.message.includes('401') ? '401' : '403'}) - check API key`,
+          timestamp: Date.now(),
+          details: { 
+            status: 'AUTH_ERROR',
+            model: DEFAULT_MODEL.split('/').pop(),
+            error: lastError.message,
+          },
+        };
+      }
+      
+      // Handle model unavailable (410)
+      if (lastError.message.includes('410') || lastError.message.includes('Model removed')) {
+        const errorMsg = `Model unavailable: ${DEFAULT_MODEL} (410)`;
+        const latency = Date.now() - startTime;
+        
+        const { logError } = await import('./errors/logs');
+        await logError('Hugging Face', errorMsg, 410);
+        
+        return {
+          service: 'Hugging Face API',
+          status: 'error',
+          latency,
+          message: errorMsg,
+          timestamp: Date.now(),
+          details: { 
+            status: 'FAIL',
+            model: DEFAULT_MODEL.split('/').pop(),
+            error: errorMsg,
+          },
+        };
+      }
+
+      // Other errors
+      const latency = Date.now() - startTime;
+      const errorMessage = lastError.message;
+      
       const { logError } = await import('./errors/logs');
       await logError('Hugging Face', errorMessage);
       
@@ -314,41 +350,9 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
         latency,
         message: errorMessage,
         timestamp: Date.now(),
-        details: { status: 'FAIL', models_tried: models.length },
+        details: { status: 'FAIL', model: DEFAULT_MODEL.split('/').pop() },
       };
     }
-
-    const latency = Date.now() - startTime;
-    
-    // Extract label and score
-    const label = Array.isArray(successfulResult) 
-      ? successfulResult.find((r: any) => r.score === Math.max(...successfulResult.map((r: any) => r.score || 0)))?.label
-      : successfulResult.label;
-    const score = Array.isArray(successfulResult)
-      ? Math.max(...successfulResult.map((r: any) => r.score || 0))
-      : successfulResult.score;
-
-    // Clear AUTH_ERROR status on success
-    try {
-      await setCache('hf:status', { status: 'OK', model: successfulModel, timestamp: Date.now() }, 3600);
-    } catch {
-      // Ignore cache errors
-    }
-
-    return {
-      service: 'Hugging Face API',
-      status: 'ok',
-      latency,
-      message: `Working with model: ${successfulModel.split('/').pop()}`,
-      timestamp: Date.now(),
-      details: { 
-        status: 'OK',
-        model: successfulModel.split('/').pop(),
-        label: label || 'N/A',
-        score: score || 0,
-        latency_ms: latency,
-      },
-    };
   } catch (error) {
     const latency = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : 'Connection failed';
@@ -445,73 +449,6 @@ export async function checkMarketAPI(baseUrl: string = ''): Promise<HealthCheckR
   }
 }
 
-export async function checkNewsAPI(baseUrl: string = ''): Promise<HealthCheckResult> {
-  const startTime = Date.now();
-  try {
-    const url = baseUrl ? `${baseUrl}/api/news` : '/api/news';
-    const response = await fetchWithTimeout(url, {}, 8000);
-
-    const latency = Date.now() - startTime;
-
-    if (!response.ok) {
-      // Log error
-      const { logError } = await import('./errors/logs');
-      await logError('News API', `HTTP ${response.status}: ${response.statusText}`, response.status);
-      
-      // Local news is always available
-      if (response.status === 401 || response.status === 403) {
-        return {
-          service: 'News API',
-          status: 'warning',
-          latency,
-          message: 'Primary sources failed, but local news available',
-          timestamp: Date.now(),
-          details: { usingFallback: true },
-        };
-      }
-      
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    const hasResults = data.results && Array.isArray(data.results) && data.results.length > 0;
-
-    if (!hasResults) {
-      return {
-        service: 'News API',
-        status: 'warning',
-        latency,
-        message: 'No news items returned',
-        timestamp: Date.now(),
-      };
-    }
-
-    return {
-      service: 'News API',
-      status: 'ok',
-      latency,
-      message: `${data.results.length} news items`,
-      timestamp: Date.now(),
-      details: { count: data.results.length },
-    };
-  } catch (error) {
-    const latency = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-    
-    // Log error
-    const { logError } = await import('./errors/logs');
-    await logError('News API', errorMessage);
-    
-    return {
-      service: 'News API',
-      status: 'error',
-      latency,
-      message: errorMessage,
-      timestamp: Date.now(),
-    };
-  }
-}
 
 export async function checkRedisLatency(): Promise<HealthCheckResult> {
   const startTime = Date.now();
@@ -666,7 +603,6 @@ export async function runAllChecks(baseUrl: string = ''): Promise<HealthCheckRes
     checkLocalNews(),
     checkHuggingFace(),
     checkMarketAPI(baseUrl),
-    checkNewsAPI(baseUrl),
     checkRedisLatency(),
     Promise.resolve(checkVercelEnv()),
     checkGitHub(),

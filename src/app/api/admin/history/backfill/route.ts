@@ -7,14 +7,14 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { symbols, force = false } = body;
+    const { symbols, days = 7, force = false } = body;
 
     if (symbols && Array.isArray(symbols) && symbols.length > 0) {
-      // Backfill specific symbols
+      // Backfill specific symbols (parallel)
       const results = await Promise.all(
         symbols.map(async (symbol: string) => {
           try {
-            const series = await backfillSymbol(symbol.toUpperCase(), force);
+            const series = await backfillSymbol(symbol.toUpperCase(), days, force);
             return {
               symbol: series.symbol,
               ok: true,
@@ -23,7 +23,6 @@ export async function POST(request: Request) {
               to: new Date(series.to).toISOString(),
               confidence: series.confidence,
               sources_used: series.sources_used,
-              years: Array.from(new Set(series.points.map(p => new Date(p.t).getUTCFullYear()))).sort(),
             };
           } catch (error) {
             return {
@@ -38,38 +37,21 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         results,
+        days_requested: days,
         timestamp: new Date().toISOString(),
       });
     } else {
-      // Backfill all
-      const results = await backfillAll(force);
-      
-      // Get detailed info for successful backfills
-      const detailed = await Promise.all(
-        results.map(async (result) => {
-          if (result.ok) {
-            try {
-              const series = await backfillSymbol(result.symbol, false);
-              return {
-                ...result,
-                points: series.points.length,
-                from: new Date(series.from).toISOString(),
-                to: new Date(series.to).toISOString(),
-                confidence: series.confidence,
-                sources_used: series.sources_used,
-                years: Array.from(new Set(series.points.map(p => new Date(p.t).getUTCFullYear()))).sort(),
-              };
-            } catch {
-              return result;
-            }
-          }
-          return result;
-        })
-      );
+      // Backfill all (parallel, optimized)
+      const results = await backfillAll(days, force);
 
       return NextResponse.json({
         success: true,
-        results: detailed,
+        results: results.map(r => ({
+          symbol: r.symbol,
+          ok: r.status === 'ok',
+          error: r.error,
+        })),
+        days_requested: days,
         timestamp: new Date().toISOString(),
       });
     }

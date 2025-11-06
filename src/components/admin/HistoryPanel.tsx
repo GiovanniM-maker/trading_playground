@@ -49,28 +49,31 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
   };
 
   const handleBackfill = async (force = false) => {
-    if (!confirm(`Are you sure you want to ${force ? 'force rebuild' : 'backfill'} all historical data? This may take several minutes.`)) {
+    if (!confirm(`Are you sure you want to ${force ? 'force rebuild' : 'backfill'} all historical data (7 days)? This should complete in 2-5 seconds.`)) {
       return;
     }
 
     setBackfilling(true);
+    const startTime = Date.now();
     try {
       const response = await fetch('/api/admin/history/backfill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force }),
+        body: JSON.stringify({ days: 7, force }),
       });
 
       if (!response.ok) throw new Error('Backfill failed');
       
       const result = await response.json();
-      alert(`Backfill completed. Results: ${result.results?.filter((r: any) => r.ok).length || 0} successful`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+      const successful = result.results?.filter((r: any) => r.ok).length || 0;
+      alert(`✅ Backfill completed in ${elapsed}s\n\nSuccessful: ${successful}/${result.results?.length || 0}`);
       
       // Refresh status
-      setTimeout(() => fetchStatus(), 2000);
+      setTimeout(() => fetchStatus(), 1000);
     } catch (error) {
       console.error('Error backfilling:', error);
-      alert('Backfill failed. Check console for details.');
+      alert(`❌ Backfill failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setBackfilling(false);
     }
@@ -170,7 +173,7 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
           className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#181818] text-[#f5f5e8] border border-[#222] hover:border-[#3a3a3a] transition-colors disabled:opacity-50"
         >
           <RefreshCw size={16} className={cn(backfilling && "animate-spin")} />
-          Backfill All
+          Backfill All (7d)
         </button>
         <button
           onClick={() => handleBackfill(true)}
@@ -178,6 +181,33 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
           className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#ff4d4d]/20 text-[#ff4d4d] border border-[#ff4d4d]/30 hover:bg-[#ff4d4d]/30 transition-colors disabled:opacity-50"
         >
           Force Rebuild
+        </button>
+        <button
+          onClick={async () => {
+            if (!confirm('Test refresh for BTC (7 days, force=true)?')) return;
+            try {
+              const start = Date.now();
+              const response = await fetch('/api/admin/history/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbols: ['BTC'], days: 7, force: true }),
+              });
+              const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+              const result = await response.json();
+              if (result.success) {
+                alert(`✅ Test completed in ${elapsed}s\n\n${JSON.stringify(result.summary, null, 2)}`);
+              } else {
+                alert(`❌ Test failed: ${result.error}`);
+              }
+              fetchStatus();
+            } catch (error) {
+              alert(`❌ Test error: ${error instanceof Error ? error.message : 'Unknown'}`);
+            }
+          }}
+          className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#00b686]/20 text-[#00b686] border border-[#00b686]/30 hover:bg-[#00b686]/30 transition-colors"
+          title="Quick test: Refresh BTC 7 days"
+        >
+          🧪 Test Refresh
         </button>
       </div>
 
