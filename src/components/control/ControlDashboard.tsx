@@ -7,6 +7,7 @@ import { ServiceStatus } from '@/lib/control/status';
 import { RefreshCw, Download, Power, Activity } from 'lucide-react';
 import { TradingLoopControl } from '@/components/TradingLoopControl';
 import { HistoryPanel } from '@/components/admin/HistoryPanel';
+import { SentimentMonitor } from '@/components/sentiment/SentimentMonitor';
 import { cn } from '@/lib/utils';
 
 interface ControlDashboardProps {
@@ -228,6 +229,11 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
         {/* History Store */}
         <div className="mb-6">
           <HistoryPanel />
+        </div>
+
+        {/* Sentiment Monitor */}
+        <div className="mb-6">
+          <SentimentMonitor />
         </div>
 
         {loading && serviceList.length === 0 ? (

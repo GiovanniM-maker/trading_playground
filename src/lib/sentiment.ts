@@ -11,8 +11,9 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
     return { label: 'NEUTRAL', score: 0.5 };
   }
 
-  // Try multiple models with fallback
+  // Try CryptoBERT first, then fallback models
   const models = [
+    'kk08/CryptoBERT', // Primary crypto-specific model
     'cardiffnlp/twitter-roberta-base-sentiment-latest',
     'SamLowe/roberta-base-go_emotions',
     'j-hartmann/emotion-english-distilroberta-base',
@@ -53,12 +54,16 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
       if (Array.isArray(data) && data.length > 0) {
         const result = data[0];
         if (Array.isArray(result)) {
-          // Multiple labels returned
+          // Multiple labels returned (CryptoBERT format)
           const positive = result.find((r: any) => 
-            r.label === 'POSITIVE' || r.label === 'LABEL_1' || r.label?.toLowerCase().includes('positive')
+            r.label === 'POSITIVE' || r.label === 'LABEL_1' || 
+            r.label?.toLowerCase().includes('positive') ||
+            r.label === 'positive'
           );
           const negative = result.find((r: any) => 
-            r.label === 'NEGATIVE' || r.label === 'LABEL_0' || r.label?.toLowerCase().includes('negative')
+            r.label === 'NEGATIVE' || r.label === 'LABEL_0' || 
+            r.label?.toLowerCase().includes('negative') ||
+            r.label === 'negative'
           );
           
           if (positive && positive.score > 0.5) {
@@ -67,24 +72,24 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
             return { label: 'NEGATIVE', score: negative.score };
           }
         } else if (result && typeof result === 'object') {
-          // Single result object
+          // Single result object (CryptoBERT may return this format)
           const label = result.label?.toLowerCase() || '';
           const score = result.score || 0.5;
-          if (label.includes('positive') || label.includes('label_1')) {
+          if (label === 'positive' || label.includes('positive') || label === 'label_1') {
             return { label: 'POSITIVE', score };
-          } else if (label.includes('negative') || label.includes('label_0')) {
+          } else if (label === 'negative' || label.includes('negative') || label === 'label_0') {
             return { label: 'NEGATIVE', score };
           }
         }
       }
 
-      // If response is object format
+      // If response is object format (direct response)
       if (data && typeof data === 'object' && !Array.isArray(data)) {
         const label = data.label?.toLowerCase() || '';
         const score = data.score || 0.5;
-        if (label.includes('positive')) {
+        if (label === 'positive' || label.includes('positive')) {
           return { label: 'POSITIVE', score };
-        } else if (label.includes('negative')) {
+        } else if (label === 'negative' || label.includes('negative')) {
           return { label: 'NEGATIVE', score };
         }
       }

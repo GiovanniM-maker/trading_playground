@@ -94,6 +94,55 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
   const start = Date.now();
   
   // Check all services in parallel
+  // Check sentiment API
+  const sentimentCheck = await Promise.allSettled([
+    (async () => {
+      const start = performance.now();
+      try {
+        const url = `${baseUrl || 'http://localhost:3000'}/api/sentiment`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const res = await fetch(url, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        const latency = Math.round(performance.now() - start);
+        
+        let json: any = {};
+        try {
+          const text = await res.text();
+          if (text) {
+            json = JSON.parse(text);
+          }
+        } catch {
+          // Not JSON, ignore
+        }
+
+        return {
+          name: 'Sentiment API',
+          status: (res.ok ? 'OK' : 'ERROR') as 'OK' | 'ERROR',
+          latency,
+          code: res.status,
+          json,
+          lastUpdate: new Date().toISOString(),
+        };
+      } catch (e: any) {
+        const latency = Math.round(performance.now() - start);
+        return {
+          name: 'Sentiment API',
+          status: 'ERROR' as const,
+          latency,
+          json: {},
+          error: e.message || 'Request failed',
+          lastUpdate: new Date().toISOString(),
+        };
+      }
+    })(),
+  ]);
+
   const [
     gecko,
     paprika,
@@ -124,6 +173,28 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
 
   // Convert health check results to service statuses
   const services: Record<string, ServiceStatus> = {};
+
+  // Sentiment API check
+  if (sentimentCheck[0].status === 'fulfilled') {
+    const sentimentResult = sentimentCheck[0].value;
+    services['Sentiment API'] = {
+      name: 'Sentiment API',
+      status: sentimentResult.status,
+      latency: sentimentResult.latency || 0,
+      code: sentimentResult.code,
+      json: sentimentResult.json,
+      error: sentimentResult.error,
+      lastUpdate: sentimentResult.lastUpdate,
+    };
+
+    // Log the event
+    await logEvent('Sentiment API', {
+      timestamp: Date.now(),
+      status: sentimentResult.status === 'OK' ? 'OK' : 'ERROR',
+      latency: sentimentResult.latency || 0,
+      message: sentimentResult.error || 'OK',
+    });
+  }
 
   // API services
   if (gecko.status === 'fulfilled') {

@@ -228,9 +228,9 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       };
     }
 
-    // Try alternative models if the primary one is unavailable (410 Gone)
-    // Using more recent and actively maintained models
+    // Try CryptoBERT first, then alternative models
     const models = [
+      'kk08/CryptoBERT', // Primary crypto-specific model
       'cardiffnlp/twitter-roberta-base-sentiment-latest',
       'SamLowe/roberta-base-go_emotions',
       'j-hartmann/emotion-english-distilroberta-base',
