@@ -44,9 +44,11 @@ async function fetchGecko(id: string): Promise<SourceData> {
   };
 }
 
-async function fetchPaprika(id: string): Promise<SourceData> {
+async function fetchPaprika(symbol: string): Promise<SourceData> {
+  // CoinPaprika uses symbol-based IDs in lowercase
+  const paprikaId = symbol.toLowerCase();
   const response = await fetch(
-    `https://api.coinpaprika.com/v1/tickers/${id}`,
+    `https://api.coinpaprika.com/v1/tickers/${paprikaId}`,
     {
       headers: {
         'Accept': 'application/json',
@@ -136,7 +138,7 @@ export async function getMarket(symbol: string): Promise<MarketData> {
   // Fetch from all sources in parallel
   const [gecko, paprika, binance, compare] = await Promise.allSettled([
     fetchGecko(coin.id),
-    fetchPaprika(coin.id),
+    fetchPaprika(coin.symbol),
     fetchBinance(coin.symbol),
     fetchCompare(coin.symbol),
   ]);
