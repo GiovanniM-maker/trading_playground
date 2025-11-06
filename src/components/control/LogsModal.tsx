@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { X, RefreshCw, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -56,7 +56,7 @@ export function LogsModal({ serviceName, isOpen, onClose }: LogsModalProps) {
         return level === filter;
       });
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch(`/api/control/logs?service=${encodeURIComponent(serviceName)}`);
@@ -70,7 +70,7 @@ export function LogsModal({ serviceName, isOpen, onClose }: LogsModalProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [serviceName]);
 
   const exportLogs = () => {
     const exportData = {
@@ -96,7 +96,7 @@ export function LogsModal({ serviceName, isOpen, onClose }: LogsModalProps) {
     if (isOpen) {
       fetchLogs();
     }
-  }, [isOpen, serviceName]);
+  }, [isOpen, fetchLogs]);
 
   useEffect(() => {
     if (!isOpen || !autoRefresh) return;
@@ -106,7 +106,7 @@ export function LogsModal({ serviceName, isOpen, onClose }: LogsModalProps) {
     }, 5000); // Refresh every 5 seconds
 
     return () => clearInterval(interval);
-  }, [isOpen, autoRefresh, serviceName]);
+  }, [isOpen, autoRefresh, fetchLogs]);
 
   if (!isOpen) return null;
 

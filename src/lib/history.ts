@@ -121,7 +121,7 @@ export async function fetchGeckoHistory(id: string, days?: number): Promise<RawP
   }
   
   const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
-    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
   if (!response) {
@@ -168,7 +168,7 @@ export async function fetchCompareHistory(symbol: string, days?: number): Promis
   }
   
   const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
-    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
   if (!response) {
@@ -207,8 +207,8 @@ export async function fetchCompareHistory(symbol: string, days?: number): Promis
 
 // Fetch from CoinPaprika (supports both limited range and full history)
 export async function fetchPaprikaHistory(id: string, days?: number): Promise<RawPoint[] | null> {
-  const symbol = symbolFromGeckoId(id);
-  if (!symbol) return null;
+    const symbol = symbolFromGeckoId(id);
+    if (!symbol) return null;
 
   let url: string;
   
@@ -224,13 +224,13 @@ export async function fetchPaprikaHistory(id: string, days?: number): Promise<Ra
   }
   
   const response = await fetchWithTimeout(url, 30000, { // 30s timeout for full history
-    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
   });
 
   if (!response) {
     return null;
-  }
-
+      }
+    
   try {
     const data = await response.json();
     if (!Array.isArray(data)) {
@@ -489,7 +489,7 @@ export async function saveHistory(
     
     let encoded: string;
     if (shouldCompress) {
-      const compressed = gzipSync(json);
+    const compressed = gzipSync(json);
       encoded = Buffer.from(compressed).toString('base64');
     } else {
       // For short ranges (<30d), store as plain JSON (faster)
@@ -553,8 +553,8 @@ export async function loadHistory(symbol: string): Promise<FusedSeries | null> {
       
       if (isCompressed) {
         // Decompress if compressed
-        const compressed = Buffer.from(encoded, 'base64');
-        const json = gunzipSync(compressed).toString();
+      const compressed = Buffer.from(encoded, 'base64');
+      const json = gunzipSync(compressed).toString();
         points = JSON.parse(json) as FusedPoint[];
       } else {
         // Direct parse if not compressed
@@ -668,7 +668,7 @@ export async function backfillSymbol(
     try {
       console.log(`[Backfill ${symbol}] Trying ${source.name}...`);
       const points = await source.fn();
-      
+  
       if (points && points.length > 0) {
       // Convert to FusedSeries format
       const fused: FusedSeries = {
@@ -693,8 +693,8 @@ export async function backfillSymbol(
           const existingMap = new Map<number, FusedPoint>();
           for (const point of existing.points) {
             existingMap.set(point.t, point);
-          }
-          
+  }
+
           // Add new points (only if timestamp doesn't exist)
           let mergedCount = 0;
           for (const point of fused.points) {

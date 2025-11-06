@@ -12,28 +12,28 @@ export async function GET() {
         const meta = await getCache(`history:${coin.symbol}:v1:meta`);
         
         if (!meta || typeof meta !== 'object') {
-        return {
-          symbol: coin.symbol,
-          available: false,
-          years: [],
-          points: 0,
-          from: null,
-          to: null,
-          confidence: null,
-          sources_used: [],
-          footprint_bytes: 0,
-          missing_years: [],
+          return {
+            symbol: coin.symbol,
+            available: false,
+            years: [],
+            points: 0,
+            from: null,
+            to: null,
+            confidence: null,
+            sources_used: [],
+            footprint_bytes: 0,
+            missing_years: [],
           last_updated: null,
           updated_days: 0,
-        };
-      }
+          };
+        }
 
-      const years = (meta.years as number[]) || [];
-      const from = meta.from as number;
-      const to = meta.to as number;
-      const points = meta.points as number;
-      const confidence = meta.confidence as number;
-      const sources_used = (meta.sources_used as string[]) || [];
+        const years = (meta.years as number[]) || [];
+        const from = meta.from as number;
+        const to = meta.to as number;
+        const points = meta.points as number;
+        const confidence = meta.confidence as number;
+        const sources_used = (meta.sources_used as string[]) || [];
       const last_updated = meta.last_updated as number | undefined;
       const updated_days = meta.updated_days as number | undefined;
 

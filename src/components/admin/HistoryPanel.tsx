@@ -372,17 +372,17 @@ export function HistoryPanel({ onClose }: HistoryPanelProps) {
                     >
                       <RefreshCw size={16} className={cn(refreshing === status.symbol && "animate-spin")} />
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleClear(status.symbol);
-                      }}
-                      disabled={clearing === status.symbol}
-                      className="p-1 text-[#ff4d4d] hover:bg-[#ff4d4d]/10 rounded transition-colors disabled:opacity-50"
-                      title="Clear history"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleClear(status.symbol);
+                    }}
+                    disabled={clearing === status.symbol}
+                    className="p-1 text-[#ff4d4d] hover:bg-[#ff4d4d]/10 rounded transition-colors disabled:opacity-50"
+                    title="Clear history"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                   </div>
                 )}
               </div>

@@ -13,7 +13,7 @@ export function LogViewer({ logs }: LogViewerProps) {
     return new Date(timestamp).toLocaleString();
   };
 
-  const getLogIcon = (status: string) => {
+  const getLogIcon = (status?: string) => {
     switch (status) {
       case 'OK':
         return <CheckCircle2 size={14} className="text-[#00b686]" />;
@@ -26,7 +26,7 @@ export function LogViewer({ logs }: LogViewerProps) {
     }
   };
 
-  const getLogColor = (status: string) => {
+  const getLogColor = (status?: string) => {
     switch (status) {
       case 'OK':
         return 'border-l-[#00b686] bg-[#00b686]/5';
@@ -55,7 +55,7 @@ export function LogViewer({ logs }: LogViewerProps) {
           key={index}
           className={cn(
             "p-3 border-l-2 rounded-r text-xs",
-            getLogColor(log.status)
+            getLogColor(log.status || undefined)
           )}
         >
           <div className="flex items-start justify-between mb-1">

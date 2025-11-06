@@ -61,6 +61,7 @@ export function Sidebar({ service, onClose }: SidebarProps) {
       return () => {
         document.removeEventListener('keydown', handleEscape);
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     } else {
       setLogs([]);
     }
