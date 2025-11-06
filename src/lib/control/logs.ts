@@ -1,4 +1,5 @@
 import { getCache, setCache } from '../redis';
+import { logger } from '../logger';
 
 export interface LogEntry {
   timestamp: number;
@@ -64,7 +65,7 @@ export async function logEvent(service: string, entry: LogEntry): Promise<void> 
 
     await setCache(key, logs, LOG_TTL);
   } catch (error) {
-    console.error(`Error logging event for ${service}:`, error);
+    logger.error({ service: 'control-logs', target_service: service, error: error instanceof Error ? error.message : 'Unknown error' }, `Error logging event for ${service}`);
     // Continue with memory-only storage
   }
 }
@@ -78,7 +79,7 @@ export async function getLogs(service: string): Promise<LogEntry[]> {
       return logs as LogEntry[];
     }
   } catch (error) {
-    console.error(`Error getting logs for ${service}:`, error);
+    logger.error({ service: 'control-logs', target_service: service, error: error instanceof Error ? error.message : 'Unknown error' }, `Error getting logs for ${service}`);
   }
 
   // Fallback to memory
@@ -92,7 +93,7 @@ export async function clearLogs(service?: string): Promise<void> {
       const key = `logs:${service}`;
       await setCache(key, [], LOG_TTL);
     } catch (error) {
-      console.error(`Error clearing logs for ${service}:`, error);
+      logger.error({ service: 'control-logs', target_service: service, error: error instanceof Error ? error.message : 'Unknown error' }, `Error clearing logs for ${service}`);
     }
   } else {
     // Clear all

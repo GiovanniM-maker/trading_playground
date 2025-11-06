@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { deleteCache } from '@/lib/redis';
+import { ClearCacheSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -7,7 +8,7 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { keys } = body;
+    const { keys } = ClearCacheSchema.parse(body);
 
     const results: string[] = [];
 
@@ -55,6 +56,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error clearing cache:', error);
     return NextResponse.json(
       {

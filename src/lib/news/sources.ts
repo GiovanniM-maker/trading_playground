@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { normalizeRSS, normalizeCoinGecko, NormalizedNews } from './normalize';
+import { logger } from '../logger';
 
 const FETCH_OPTIONS = {
   headers: {
@@ -23,7 +24,7 @@ async function fetchWithRetry(url: string, maxRetries = 1): Promise<Response | n
       return response;
     } catch (error) {
       if (attempt === maxRetries) {
-        console.error(`Fetch failed for ${url}:`, error);
+        logger.error({ service: 'news-sources', url, error: error instanceof Error ? error.message : 'Unknown error' }, `Fetch failed for ${url}`);
         return null;
       }
       await new Promise(resolve => setTimeout(resolve, 1500));
@@ -57,7 +58,7 @@ export async function fetchCoinDesk(): Promise<{ items: NormalizedNews[]; status
     
     return { items, status: 'ok' };
   } catch (error) {
-    console.error('Error fetching CoinDesk:', error);
+    logger.error({ service: 'news-sources', source: 'coindesk', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error fetching CoinDesk');
     return { items: [], status: 'error' };
   }
 }
@@ -86,7 +87,7 @@ export async function fetchCoinTelegraph(): Promise<{ items: NormalizedNews[]; s
     
     return { items, status: 'ok' };
   } catch (error) {
-    console.error('Error fetching CoinTelegraph:', error);
+    logger.error({ service: 'news-sources', source: 'cointelegraph', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error fetching CoinTelegraph');
     return { items: [], status: 'error' };
   }
 }
@@ -107,7 +108,7 @@ export async function fetchCoinGecko(): Promise<{ items: NormalizedNews[]; statu
     
     return { items, status: 'ok' };
   } catch (error) {
-    console.error('Error fetching CoinGecko:', error);
+    logger.error({ service: 'news-sources', source: 'coingecko', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error fetching CoinGecko');
     return { items: [], status: 'error' };
   }
 }

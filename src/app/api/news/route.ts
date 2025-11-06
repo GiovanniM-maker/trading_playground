@@ -1,5 +1,6 @@
 import { fetchCryptoNewsWithSentiment } from '@/lib/news/aggregator';
 import { getCache } from '@/lib/redis';
+import { logger } from '@/lib/logger';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error fetching news:', error);
+    logger.error({ service: 'api', route: 'news', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error fetching news');
     
     // Try to return cached data as fallback
     try {

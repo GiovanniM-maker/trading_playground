@@ -7,6 +7,7 @@ import {
   checkVercelEnv,
   checkGitHub,
 } from '@/lib/healthChecks';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     const results = await runAllChecks(baseUrl);
     return NextResponse.json({ results });
   } catch (error) {
-    console.error('Health check error:', error);
+    logger.error({ service: 'health', error: error instanceof Error ? error.message : 'Unknown error' }, 'Health check error');
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }

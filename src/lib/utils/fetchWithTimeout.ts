@@ -1,3 +1,5 @@
+import { logger } from '../logger';
+
 /**
  * Fetch with timeout support
  * Returns null on failure instead of throwing
@@ -26,9 +28,9 @@ export async function fetchWithTimeout(
   } catch (err) {
     clearTimeout(id);
     if (err instanceof Error && err.name === 'AbortError') {
-      console.error(`Fetch timeout: ${url} (${timeout}ms)`);
+      logger.error({ service: 'fetch', url, timeout, error: 'timeout' }, `Fetch timeout: ${url} (${timeout}ms)`);
     } else {
-      console.error(`Fetch failed: ${url}`, err);
+      logger.error({ service: 'fetch', url, error: err instanceof Error ? err.message : 'Unknown error' }, `Fetch failed: ${url}`);
     }
     return null;
   }

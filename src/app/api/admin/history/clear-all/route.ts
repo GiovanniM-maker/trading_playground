@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { COINS } from '@/lib/history';
 import { getCache, deleteCache } from '@/lib/redis';
+import { HistoryClearAllSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -8,14 +9,7 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { confirm } = body;
-
-    if (confirm !== 'DELETE_ALL_HISTORY') {
-      return NextResponse.json(
-        { error: 'Confirmation required. Send { "confirm": "DELETE_ALL_HISTORY" }' },
-        { status: 400 }
-      );
-    }
+    HistoryClearAllSchema.parse(body);
 
     const deleted: string[] = [];
     const errors: string[] = [];
@@ -59,6 +53,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in clear-all API:', error);
     return NextResponse.json(
       {

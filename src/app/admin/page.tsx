@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { HeaderBar } from '@/components/HeaderBar';
+import { AdminGuard } from '@/components/auth/AdminGuard';
 import { HealthCheckResult } from '@/lib/healthChecks';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
@@ -227,9 +228,10 @@ export default function AdminPage() {
   const uptime = calculateUptime();
 
   return (
-    <div className="flex flex-col w-full h-screen bg-[#0c0c0d] text-[#f5f5e8] overflow-hidden">
-      <HeaderBar />
-      <main className="flex-grow h-[calc(100vh-90px)] overflow-y-auto p-6">
+    <AdminGuard>
+      <div className="flex flex-col w-full h-screen bg-[#0c0c0d] text-[#f5f5e8] overflow-hidden">
+        <HeaderBar />
+        <main className="flex-grow h-[calc(100vh-90px)] overflow-y-auto p-6">
         {/* Header */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
@@ -455,7 +457,8 @@ export default function AdminPage() {
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </AdminGuard>
   );
 }
 

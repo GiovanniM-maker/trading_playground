@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getControlStatus } from '@/lib/control/status';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
     const status = await getControlStatus(url);
     return NextResponse.json(status);
   } catch (error) {
-    console.error('Error getting control status:', error);
+    logger.error({ service: 'api', route: 'control/status', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error getting control status');
     return NextResponse.json(
       {
         timestamp: new Date().toISOString(),

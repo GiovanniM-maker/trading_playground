@@ -75,3 +75,38 @@ export async function deleteCache(key: string): Promise<boolean> {
   }
 }
 
+/**
+ * Get value from cache, or fetch and cache it if not found
+ * @param key Cache key
+ * @param fetchFn Function to fetch the value if not in cache
+ * @param ttlSeconds Time to live in seconds (default: 3600)
+ * @returns The cached or freshly fetched value
+ */
+export async function getOrFetch<T>(
+  key: string,
+  fetchFn: () => Promise<T>,
+  ttlSeconds: number = 3600
+): Promise<T> {
+  // Try to get from cache first
+  const cached = await getCache(key);
+  if (cached !== null) {
+    return cached as T;
+  }
+
+  // Fetch fresh data
+  const data = await fetchFn();
+
+  // Cache it for future requests
+  await setCache(key, data, ttlSeconds);
+
+  return data;
+}
+
+/**
+ * Invalidate cache by key
+ * @param key Cache key to invalidate
+ */
+export async function invalidateCache(key: string): Promise<void> {
+  await deleteCache(key);
+}
+

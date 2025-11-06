@@ -1,4 +1,5 @@
 import { refreshHistory, COINS } from './history';
+import { logger } from './logger';
 
 let isRunning = false;
 let intervalId: NodeJS.Timeout | null = null;
@@ -7,12 +8,12 @@ let lastResult: { success: number; failed: number } | null = null;
 
 export async function startHistoryRefreshLoop(): Promise<void> {
   if (isRunning) {
-    console.log('[HistoryRefresh] Loop is already running');
+    logger.info({ service: 'history-refresh' }, 'Loop is already running');
     return;
   }
 
   isRunning = true;
-  console.log('[HistoryRefresh] Starting automatic history refresh loop (every 15s)...');
+  logger.info({ service: 'history-refresh' }, 'Starting automatic history refresh loop (every 15s)...');
 
   // Run immediately on start
   await executeRefreshCycle();
@@ -25,7 +26,7 @@ export async function startHistoryRefreshLoop(): Promise<void> {
 
 export function stopHistoryRefreshLoop(): void {
   if (!isRunning) {
-    console.log('[HistoryRefresh] Loop is not running');
+    logger.info({ service: 'history-refresh' }, 'Loop is not running');
     return;
   }
 
@@ -35,7 +36,7 @@ export function stopHistoryRefreshLoop(): void {
   }
 
   isRunning = false;
-  console.log('[HistoryRefresh] Refresh loop stopped');
+  logger.info({ service: 'history-refresh' }, 'Refresh loop stopped');
 }
 
 export function getHistoryRefreshStatus(): { 
@@ -52,7 +53,7 @@ export function getHistoryRefreshStatus(): {
 
 async function executeRefreshCycle(): Promise<void> {
   try {
-    console.log('[HistoryRefresh] Starting refresh cycle...');
+    logger.info({ service: 'history-refresh' }, 'Starting refresh cycle...');
     const startTime = Date.now();
     
     // Refresh last 7 days for all symbols (in parallel)
@@ -63,7 +64,9 @@ async function executeRefreshCycle(): Promise<void> {
           await refreshHistory(symbol, 7, false); // 7 days, no force
           return { symbol, ok: true };
         } catch (error) {
-          console.error(`[HistoryRefresh] Failed to refresh ${symbol}:`, error);
+          logger.error({ service: 'history-refresh', symbol, error: error instanceof Error ? error.message : 'Unknown error' }, `Failed to refresh ${symbol}`);
+          const { sendAlert } = await import('./alert');
+          await sendAlert('History Refresh Loop', `Failed to refresh ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
           return { symbol, ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
         }
       })
@@ -76,9 +79,11 @@ async function executeRefreshCycle(): Promise<void> {
     lastResult = { success: successful, failed };
     
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[HistoryRefresh] ✅ Cycle completed in ${elapsed}s - Success: ${successful}/${symbols.length}, Failed: ${failed}`);
+    logger.info({ service: 'history-refresh', elapsed: parseFloat(elapsed), successful, failed, total: symbols.length }, `Cycle completed in ${elapsed}s - Success: ${successful}/${symbols.length}, Failed: ${failed}`);
   } catch (error) {
-    console.error('[HistoryRefresh] Refresh cycle error:', error);
+    logger.error({ service: 'history-refresh', error: error instanceof Error ? error.message : 'Unknown error' }, 'Refresh cycle error');
+    const { sendAlert } = await import('./alert');
+    await sendAlert('History Refresh Loop', `Critical cycle error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     // Don't stop the loop on errors
   }
 }
@@ -87,7 +92,9 @@ async function executeRefreshCycle(): Promise<void> {
 if (process.env.NODE_ENV === 'production' && typeof window === 'undefined') {
   // Small delay to ensure Redis is ready
   setTimeout(() => {
-    startHistoryRefreshLoop().catch(console.error);
+    startHistoryRefreshLoop().catch((error) => {
+      logger.error({ service: 'history-refresh', error: error instanceof Error ? error.message : 'Unknown error' }, 'Failed to start history refresh loop');
+    });
   }, 5000);
 }
 

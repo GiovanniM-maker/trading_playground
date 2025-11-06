@@ -1,5 +1,6 @@
 import { getCache, setCache } from '../redis';
 import { randomUUID } from 'crypto';
+import { logger } from '../logger';
 
 export interface SentimentLogEntry {
   id: string;
@@ -42,7 +43,7 @@ export async function logSentiment(
     // Save back to Redis
     await setCache(LOG_KEY, logs, LOG_TTL);
   } catch (error) {
-    console.error('Error logging sentiment:', error);
+    logger.error({ service: 'sentiment-logs', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error logging sentiment');
     // Continue even if logging fails
   }
 
@@ -56,7 +57,7 @@ export async function getSentimentLogs(limit: number = 100): Promise<SentimentLo
       return logs.slice(0, limit) as SentimentLogEntry[];
     }
   } catch (error) {
-    console.error('Error getting sentiment logs:', error);
+    logger.error({ service: 'sentiment-logs', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error getting sentiment logs');
   }
   return [];
 }
@@ -65,7 +66,7 @@ export async function clearSentimentLogs(): Promise<void> {
   try {
     await setCache(LOG_KEY, [], LOG_TTL);
   } catch (error) {
-    console.error('Error clearing sentiment logs:', error);
+    logger.error({ service: 'sentiment-logs', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error clearing sentiment logs');
   }
 }
 

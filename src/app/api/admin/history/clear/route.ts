@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { COINS } from '@/lib/history';
 import { getCache, deleteCache } from '@/lib/redis';
+import { HistoryClearSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -8,14 +9,7 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { symbol } = body;
-
-    if (!symbol) {
-      return NextResponse.json(
-        { error: 'Symbol parameter is required' },
-        { status: 400 }
-      );
-    }
+    const { symbol } = HistoryClearSchema.parse(body);
 
     const upperSymbol = symbol.toUpperCase();
     const validSymbol = COINS.find(c => c.symbol === upperSymbol);
@@ -61,6 +55,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in history clear API:', error);
     return NextResponse.json(
       {

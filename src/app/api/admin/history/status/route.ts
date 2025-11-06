@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { loadHistory, COINS } from '@/lib/history';
 import { getCache } from '@/lib/redis';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -79,7 +80,7 @@ export async function GET() {
       statuses,
     });
   } catch (error) {
-    console.error('Error in history status API:', error);
+    logger.error({ service: 'api', route: 'admin/history/status', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error in history status API');
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'Unknown error',

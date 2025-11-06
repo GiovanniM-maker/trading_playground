@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession, signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { useLivePrices } from '@/lib/market/live';
+import { LogIn, LogOut, User } from 'lucide-react';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
@@ -20,6 +22,11 @@ const navLinks = [
 export function HeaderBar() {
   const pathname = usePathname();
   const { prices, loading } = useLivePrices();
+  const { data: session, status } = useSession();
+  
+  const handleSignOut = async () => {
+    await signOut({ callbackUrl: '/' });
+  };
   
   return (
     <header className="flex-shrink-0 z-50 bg-[var(--background-alt)] border-b border-[var(--border-color)]">
@@ -46,6 +53,40 @@ export function HeaderBar() {
                 </Link>
               ))}
             </nav>
+          </div>
+          
+          {/* Auth Status */}
+          <div className="flex items-center gap-3">
+            {status === 'loading' ? (
+              <div className="w-6 h-6 border-2 border-[var(--text-muted)] border-t-transparent rounded-full animate-spin" />
+            ) : session ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                  <User size={14} />
+                  <span className="text-[var(--text-primary)]">{session.user.email}</span>
+                  {session.user.role === 'admin' && (
+                    <span className="px-1.5 py-0.5 bg-[#00b686]/20 text-[#00b686] border border-[#00b686]/30 text-xs font-medium rounded">
+                      Admin
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--panel-bg)] transition-colors"
+                >
+                  <LogOut size={14} />
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--panel-bg)] transition-colors"
+              >
+                <LogIn size={14} />
+                Login
+              </Link>
+            )}
           </div>
         </div>
         

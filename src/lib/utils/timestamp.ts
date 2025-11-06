@@ -1,3 +1,5 @@
+import { logger } from '../logger';
+
 /**
  * Normalize timestamp to UTC midnight
  * Handles both string and number inputs, converts seconds to ms if needed
@@ -42,7 +44,7 @@ export async function getEURToUSDRate(): Promise<number> {
       }
     }
   } catch (error) {
-    console.warn('Failed to fetch EUR/USD rate, using default:', error);
+    logger.warn({ service: 'timestamp', error: error instanceof Error ? error.message : 'Unknown error' }, 'Failed to fetch EUR/USD rate, using default');
   }
   
   // Fallback: approximate rate (should be updated regularly)

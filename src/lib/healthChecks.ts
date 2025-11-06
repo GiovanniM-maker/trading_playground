@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 export interface HealthCheckResult {
   service: string;
   status: 'ok' | 'warning' | 'error';
@@ -152,7 +154,7 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
     const { isHFConfigured } = await import('./hf/client');
     
     if (!isHFConfigured()) {
-      console.log("Sentiment disabled");
+      logger.info({ service: 'health', check: 'huggingface' }, "Sentiment disabled");
       return {
         service: 'Hugging Face API',
         status: 'warning',
@@ -234,6 +236,8 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
           await setCache('hf:status', { status: 'AUTH_ERROR', timestamp: Date.now() }, 3600);
           const { logError } = await import('./errors/logs');
           await logError('Hugging Face', lastError.message, lastError.message.includes('401') ? 401 : 403);
+          const { sendAlert } = await import('./alert');
+          await sendAlert('Hugging Face API', `Authentication failed: ${lastError.message}`);
         } catch {
           // Ignore logging errors
         }
@@ -260,6 +264,8 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
         
         const { logError } = await import('./errors/logs');
         await logError('Hugging Face', errorMsg, 410);
+        const { sendAlert } = await import('./alert');
+        await sendAlert('Hugging Face API', errorMsg);
         
         return {
           service: 'Hugging Face API',
@@ -281,6 +287,8 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
       
       const { logError } = await import('./errors/logs');
       await logError('Hugging Face', errorMessage);
+      const { sendAlert } = await import('./alert');
+      await sendAlert('Hugging Face API', errorMessage);
       
       return {
         service: 'Hugging Face API',
@@ -298,6 +306,8 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
     // Log error
     const { logError } = await import('./errors/logs');
     await logError('Hugging Face', errorMessage);
+    const { sendAlert } = await import('./alert');
+    await sendAlert('Hugging Face API', errorMessage);
     
     return {
       service: 'Hugging Face API',

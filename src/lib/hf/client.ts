@@ -1,3 +1,5 @@
+import { logger } from '../logger';
+
 /**
  * Centralized Hugging Face Inference API client
  * Ensures consistent authentication and error handling
@@ -32,20 +34,32 @@ export async function hfRequest(model: string, payload: any, options: HFRequestO
     clearTimeout(timeoutId);
 
     if (res.status === 401) {
-      throw new Error("Unauthorized (401) - Invalid or expired API key");
+      const error = "Unauthorized (401) - Invalid or expired API key";
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', error);
+      throw new Error(error);
     }
     
     if (res.status === 403) {
-      throw new Error("Forbidden (403) - API key lacks required permissions");
+      const error = "Forbidden (403) - API key lacks required permissions";
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', error);
+      throw new Error(error);
     }
     
     if (res.status === 410) {
-      throw new Error(`Model removed (410) - Model ${model} is no longer available`);
+      const error = `Model removed (410) - Model ${model} is no longer available`;
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', error);
+      throw new Error(error);
     }
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => 'Unknown error');
-      throw new Error(`HF error ${res.status}: ${errorText}`);
+      const error = `HF error ${res.status}: ${errorText}`;
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', error);
+      throw new Error(error);
     }
 
     return await res.json();
@@ -53,7 +67,16 @@ export async function hfRequest(model: string, payload: any, options: HFRequestO
     clearTimeout(timeoutId);
     
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeout}ms`);
+      const timeoutError = `Request timeout after ${timeout}ms`;
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', timeoutError);
+      throw new Error(timeoutError);
+    }
+    
+    // Only alert on non-timeout errors that aren't already handled
+    if (error instanceof Error && !error.message.includes('401') && !error.message.includes('403') && !error.message.includes('410')) {
+      const { sendAlert } = await import('../alert');
+      await sendAlert('Hugging Face Client', error.message);
     }
     
     throw error;
@@ -73,7 +96,7 @@ export function isHFConfigured(): boolean {
  */
 export function assertHFConfig(): void {
   if (!isHFConfigured()) {
-    console.warn("Hugging Face API key not configured - sentiment analysis will be disabled");
+    logger.warn({ service: 'hf-client' }, "Hugging Face API key not configured - sentiment analysis will be disabled");
     throw new Error("Missing HUGGINGFACE_API_KEY environment variable");
   }
 }

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const inter = Inter({ 
@@ -20,7 +22,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <ErrorBoundary>
+          <Providers>
+            {children}
+          </Providers>
+        </ErrorBoundary>
+      </body>
     </html>
   );
 }

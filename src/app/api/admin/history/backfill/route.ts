@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { backfillSymbol, backfillAll, COINS } from '@/lib/history';
+import { HistoryBackfillSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -7,7 +8,8 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { symbols, days, force = false } = body;
+    const data = HistoryBackfillSchema.parse(body);
+    const { symbols, days, force = false } = data;
     // If days is not provided or 0, fetch full history (undefined = all history)
     const daysParam = days && days > 0 ? days : undefined;
 
@@ -58,6 +60,9 @@ export async function POST(request: Request) {
       });
     }
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in backfill API:', error);
     return NextResponse.json(
       {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSystemStatus } from '@/lib/status';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -9,7 +10,7 @@ export async function GET() {
     const status = await getSystemStatus();
     return NextResponse.json(status);
   } catch (error) {
-    console.error('Error getting system status:', error);
+    logger.error({ service: 'api', route: 'system/status', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error getting system status');
     return NextResponse.json(
       {
         timestamp: new Date().toISOString(),

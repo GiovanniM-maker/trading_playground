@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { startTradingLoop, stopTradingLoop, getTradingLoopStatus } from '@/lib/tradingLoop';
+import { TradingLoopActionSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -22,7 +23,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { action } = body;
+    const { action } = TradingLoopActionSchema.parse(body);
 
     if (action === 'start') {
       await startTradingLoop();
@@ -38,13 +39,11 @@ export async function POST(request: Request) {
         message: 'Trading loop stopped',
         running: false,
       });
-    } else {
-      return NextResponse.json(
-        { error: 'Invalid action. Use "start" or "stop"' },
-        { status: 400 }
-      );
     }
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error controlling trading loop:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unknown error' },

@@ -2,6 +2,7 @@ import { getCache, setCache } from './redis';
 import { createHash } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { fetchWithTimeout } from './utils/fetchWithTimeout';
+import { logger } from './logger';
 
 export const COINS = [
   { id: 'bitcoin', symbol: 'BTC' },
@@ -144,12 +145,12 @@ export async function fetchGeckoHistory(id: string, days?: number): Promise<RawP
 
     if (normalized.length > 0) {
       const range = days ? `${days} days` : 'full history';
-      console.log(`[CoinGecko ${id}] Fetched ${normalized.length} points (${range})`);
+      logger.info({ service: 'history', source: 'coingecko', id, points: normalized.length, range }, `Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
   } catch (error) {
-    console.error(`Error parsing CoinGecko response for ${id}:`, error);
+    logger.error({ service: 'history', source: 'coingecko', id, error: error instanceof Error ? error.message : 'Unknown error' }, `Error parsing CoinGecko response for ${id}`);
     return null;
   }
 }
@@ -195,12 +196,12 @@ export async function fetchCompareHistory(symbol: string, days?: number): Promis
 
     if (normalized.length > 0) {
       const range = days ? `${days} days` : 'full history';
-      console.log(`[CryptoCompare ${symbol}] Fetched ${normalized.length} points (${range})`);
+      logger.info({ service: 'history', source: 'cryptocompare', symbol, points: normalized.length, range }, `Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
   } catch (error) {
-    console.error(`Error parsing CryptoCompare response for ${symbol}:`, error);
+    logger.error({ service: 'history', source: 'cryptocompare', symbol, error: error instanceof Error ? error.message : 'Unknown error' }, `Error parsing CryptoCompare response for ${symbol}`);
     return null;
   }
 }
@@ -247,12 +248,12 @@ export async function fetchPaprikaHistory(id: string, days?: number): Promise<Ra
 
     if (normalized.length > 0) {
       const range = days ? `${days} days` : 'full history';
-      console.log(`[CoinPaprika ${symbol}] Fetched ${normalized.length} points (${range})`);
+      logger.info({ service: 'history', source: 'coinpaprika', id, symbol, points: normalized.length, range }, `Fetched ${normalized.length} points (${range})`);
     }
 
     return normalized;
   } catch (error) {
-    console.warn(`CoinPaprika history fetch failed for ${id}:`, error);
+    logger.warn({ service: 'history', source: 'coinpaprika', id, symbol, error: error instanceof Error ? error.message : 'Unknown error' }, `CoinPaprika history fetch failed for ${id}`);
     return null;
   }
 }
@@ -423,7 +424,7 @@ export async function fuseSources(
     const max = Math.max(...fused.map(p => p.p));
     const sample = fused.slice(0, 3);
     const latest = fused[fused.length - 1];
-    console.log(`[Fused Series] Points: ${fused.length}, price range: $${min.toFixed(2)} - $${max.toFixed(2)}, latest: $${latest.p.toFixed(2)} at ${new Date(latest.t).toISOString()}, sample:`, sample);
+    logger.info({ service: 'history', action: 'fuse', points: fused.length, min, max, latest_price: latest.p, latest_timestamp: new Date(latest.t).toISOString(), sample }, `Fused Series: ${fused.length} points, price range: $${min.toFixed(2)} - $${max.toFixed(2)}`);
   }
 
   // Calculate checksum
@@ -459,7 +460,7 @@ export async function saveHistory(
     if (existingMeta && typeof existingMeta === 'object') {
       const existingChecksum = existingMeta.checksum as string | undefined;
       if (existingChecksum === series.checksum) {
-        console.log(`[Save ${symbol}] Skipping write - checksum unchanged`);
+        logger.info({ service: 'history', action: 'save', symbol, checksum: series.checksum }, `Skipping write - checksum unchanged`);
         return;
       }
     }
@@ -523,7 +524,7 @@ export async function saveHistory(
   };
 
   await setCache(`history:${symbol}:v1:meta`, meta, 0);
-  console.log(`[Save ${symbol}] Saved ${series.points.length} points${shouldCompress ? ' (compressed)' : ''}`);
+  logger.info({ service: 'history', action: 'save', symbol, points: series.points.length, compressed: shouldCompress }, `Saved ${series.points.length} points${shouldCompress ? ' (compressed)' : ''}`);
 }
 
 // Load history from Redis (handles both compressed and uncompressed)
@@ -563,7 +564,7 @@ export async function loadHistory(symbol: string): Promise<FusedSeries | null> {
       
       allPoints.push(...points);
     } catch (error) {
-      console.error(`Error loading chunk for ${symbol} year ${year}:`, error);
+      logger.error({ service: 'history', action: 'load', symbol, year, error: error instanceof Error ? error.message : 'Unknown error' }, `Error loading chunk for ${symbol} year ${year}`);
     }
   }
 
@@ -666,7 +667,7 @@ export async function backfillSymbol(
 
   for (const source of sources) {
     try {
-      console.log(`[Backfill ${symbol}] Trying ${source.name}...`);
+      logger.info({ service: 'history', action: 'backfill', symbol, source: source.name }, `Trying ${source.name}...`);
       const points = await source.fn();
   
       if (points && points.length > 0) {
@@ -717,7 +718,7 @@ export async function backfillSymbol(
             .digest('hex')
             .substring(0, 16);
           
-          console.log(`[Backfill ${symbol}] Merged ${mergedCount} new points with ${existing.points.length} existing`);
+          logger.info({ service: 'history', action: 'backfill', symbol, source: source.name, merged: mergedCount, existing: existing.points.length }, `Merged ${mergedCount} new points with ${existing.points.length} existing`);
         }
       }
 
@@ -733,11 +734,11 @@ export async function backfillSymbol(
         timestamp: Date.now(),
       });
 
-      console.log(`[Backfill ${symbol}] ✅ Success using ${source.name}, ${fused.points.length} points`);
+      logger.info({ service: 'history', action: 'backfill', symbol, source: source.name, points: fused.points.length }, `Success using ${source.name}, ${fused.points.length} points`);
       return fused;
       }
     } catch (error) {
-      console.error(`[Backfill ${symbol}] ❌ ${source.name} failed:`, error);
+      logger.error({ service: 'history', action: 'backfill', symbol, source: source.name, error: error instanceof Error ? error.message : 'Unknown error' }, `${source.name} failed`);
       lastError = error instanceof Error ? error : new Error(String(error));
       // Continue to next source
     }
@@ -867,7 +868,7 @@ export async function refreshHistory(
       updated_days: updatedDays,
     };
   } catch (error) {
-    console.error(`Error refreshing history for ${symbol}:`, error);
+    logger.error({ service: 'history', action: 'refresh', symbol, error: error instanceof Error ? error.message : 'Unknown error' }, `Error refreshing history for ${symbol}`);
     throw error;
   }
 }
@@ -906,7 +907,7 @@ async function logHistoryUpdate(
 
     await setCache(logKey, logs, 0);
   } catch (error) {
-    console.error('Error logging history update:', error);
+    logger.error({ service: 'history', action: 'log-update', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error logging history update');
     // Don't throw - logging is non-critical
   }
 }

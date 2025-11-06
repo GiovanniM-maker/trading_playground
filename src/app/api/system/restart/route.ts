@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { deleteCache } from '@/lib/redis';
 import { stopTradingLoop, startTradingLoop } from '@/lib/tradingLoop';
+import { SystemRestartSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -8,7 +9,7 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { action } = body;
+    const { action } = SystemRestartSchema.parse(body);
 
     const results: string[] = [];
 
@@ -55,6 +56,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in restart API:', error);
     return NextResponse.json(
       {

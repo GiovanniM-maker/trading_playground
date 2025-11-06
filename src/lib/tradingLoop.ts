@@ -1,6 +1,7 @@
 import { addTrade, updatePortfolio, getPortfolio, Trade } from '@/lib/db';
 import { getMarket } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { logger } from './logger';
 
 const MODELS = ['GPT 5', 'Claude Sonnet', 'Gemini 2.5', 'Grok 4', 'DeepSeek Chat', 'Qwen 3 Max'];
 const SYMBOLS = ['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'];
@@ -10,12 +11,12 @@ let intervalId: NodeJS.Timeout | null = null;
 
 export async function startTradingLoop(): Promise<void> {
   if (isRunning) {
-    console.log('Trading loop is already running');
+    logger.info({ service: 'trading-loop' }, 'Trading loop is already running');
     return;
   }
 
   isRunning = true;
-  console.log('Starting mock trading loop...');
+  logger.info({ service: 'trading-loop' }, 'Starting mock trading loop...');
 
   // Run immediately on start
   await executeTradingCycle();
@@ -28,7 +29,7 @@ export async function startTradingLoop(): Promise<void> {
 
 export function stopTradingLoop(): void {
   if (!isRunning) {
-    console.log('Trading loop is not running');
+    logger.info({ service: 'trading-loop' }, 'Trading loop is not running');
     return;
   }
 
@@ -38,7 +39,7 @@ export function stopTradingLoop(): void {
   }
 
   isRunning = false;
-  console.log('[TradingLoop] Trading loop stopped');
+  logger.info({ service: 'trading-loop' }, 'Trading loop stopped');
 }
 
 export function getTradingLoopStatus(): { running: boolean } {
@@ -146,13 +147,17 @@ async function executeTradingCycle(): Promise<void> {
           last_update: new Date().toISOString(),
         });
 
-        console.log(`[TradingLoop] Trade generated: ${model} ${side} ${qty} ${symbol} @ $${price} (PnL: $${pnl.toFixed(2)})`);
+        logger.info({ service: 'trading-loop', model, side, qty, symbol, price, pnl }, `Trade generated: ${model} ${side} ${qty} ${symbol} @ $${price} (PnL: $${pnl.toFixed(2)})`);
       } catch (error) {
-        console.error(`Error generating trade for ${model}:`, error);
+        logger.error({ service: 'trading-loop', model, error: error instanceof Error ? error.message : 'Unknown error' }, `Error generating trade for ${model}`);
+        const { sendAlert } = await import('./alert');
+        await sendAlert('Trading Loop', `Error generating trade for ${model}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   } catch (error) {
-    console.error('Trading loop error:', error);
+    logger.error({ service: 'trading-loop', error: error instanceof Error ? error.message : 'Unknown error' }, 'Trading loop error');
+    const { sendAlert } = await import('./alert');
+    await sendAlert('Trading Loop', `Critical error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     // Don't stop the loop on individual errors
   }
 }
@@ -161,7 +166,9 @@ async function executeTradingCycle(): Promise<void> {
 if (process.env.NODE_ENV === 'development' && typeof window === 'undefined') {
   // Small delay to ensure Redis is ready
   setTimeout(() => {
-    startTradingLoop().catch(console.error);
+    startTradingLoop().catch((error) => {
+      logger.error({ service: 'trading-loop', error: error instanceof Error ? error.message : 'Unknown error' }, 'Failed to start trading loop');
+    });
   }, 2000);
 }
 

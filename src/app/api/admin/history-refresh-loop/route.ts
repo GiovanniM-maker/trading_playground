@@ -4,6 +4,7 @@ import {
   stopHistoryRefreshLoop, 
   getHistoryRefreshStatus 
 } from '@/lib/historyRefreshLoop';
+import { HistoryRefreshLoopActionSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -24,7 +25,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { action } = body;
+    const { action } = HistoryRefreshLoopActionSchema.parse(body);
 
     if (action === 'start') {
       await startHistoryRefreshLoop();
@@ -42,13 +43,11 @@ export async function POST(request: Request) {
         running: status.running,
         message: 'History refresh loop stopped' 
       });
-    } else {
-      return NextResponse.json(
-        { error: 'Invalid action. Use "start" or "stop"' },
-        { status: 400 }
-      );
     }
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in history refresh loop API:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unknown error' },

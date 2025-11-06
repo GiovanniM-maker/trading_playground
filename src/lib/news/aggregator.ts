@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { getCache, setCache } from '@/lib/redis';
 import { analyzeSentiment } from '@/lib/sentiment';
 import { COINS } from '@/lib/market/config';
+import { logger } from '@/lib/logger';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -59,7 +60,7 @@ async function fetchWithRetry(url: string, maxRetries = 1): Promise<Response | n
       return response;
     } catch (error) {
       if (attempt === maxRetries) {
-        console.warn(`Failed to fetch ${url}:`, error);
+        logger.warn({ service: 'news', url, error: error instanceof Error ? error.message : 'Unknown error' }, `Failed to fetch ${url}`);
         return null;
       }
       await new Promise(resolve => setTimeout(resolve, 1500));
@@ -84,7 +85,7 @@ export async function fetchCryptoNews(force = false): Promise<AggregatedNewsArti
     try {
       const response = await fetchWithRetry(src.url);
       if (!response || !response.ok) {
-        console.warn(`Failed to fetch ${src.id}: HTTP ${response?.status || 'unknown'}`);
+        logger.warn({ service: 'news', source: src.id, status: response?.status || 'unknown' }, `Failed to fetch ${src.id}: HTTP ${response?.status || 'unknown'}`);
         continue;
       }
 
@@ -116,7 +117,7 @@ export async function fetchCryptoNews(force = false): Promise<AggregatedNewsArti
         }
       }
     } catch (err) {
-      console.warn(`Failed to fetch ${src.id}:`, err);
+      logger.warn({ service: 'news', source: src.id, error: err instanceof Error ? err.message : 'Unknown error' }, `Failed to fetch ${src.id}`);
     }
   }
 
@@ -188,7 +189,7 @@ export async function fetchCryptoNewsWithSentiment(force = false): Promise<{
         confidence: result.confidence || 0.5,
       };
     } catch (error) {
-      console.error('Error analyzing sentiment:', error);
+      logger.error({ service: 'news', action: 'sentiment', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error analyzing sentiment');
       sentiment = { label: 'NEUTRAL' as const, confidence: 0.5 };
     }
 

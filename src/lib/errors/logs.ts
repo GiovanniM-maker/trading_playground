@@ -1,5 +1,6 @@
 import { getCache, setCache } from '../redis';
 import { randomUUID } from 'crypto';
+import { logger } from '../logger';
 
 export interface ErrorLogEntry {
   id: string;
@@ -53,7 +54,7 @@ export async function logError(
 
     await setCache(ERROR_KEY, errors, ERROR_TTL);
   } catch (err) {
-    console.error('Error logging to Redis:', err);
+    logger.error({ service: 'error-logs', error: err instanceof Error ? err.message : 'Unknown error' }, 'Error logging to Redis');
   }
 
   return entry;
@@ -66,7 +67,7 @@ export async function getErrorLogs(limit: number = 100): Promise<ErrorLogEntry[]
       return errors.slice(0, limit) as ErrorLogEntry[];
     }
   } catch (error) {
-    console.error('Error getting error logs:', error);
+    logger.error({ service: 'error-logs', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error getting error logs');
   }
   return [];
 }
@@ -82,7 +83,7 @@ export async function getErrorCountByService(): Promise<Record<string, number>> 
     
     return counts;
   } catch (error) {
-    console.error('Error getting error counts:', error);
+    logger.error({ service: 'error-logs', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error getting error counts');
     return {};
   }
 }

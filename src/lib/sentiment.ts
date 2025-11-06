@@ -1,4 +1,5 @@
 import { getCache, setCache } from './redis';
+import { logger } from './logger';
 
 const MODEL = process.env.HF_MODEL || "kk08/CryptoBERT";
 const HF_KEY = process.env.HUGGINGFACE_API_KEY || "";
@@ -30,7 +31,7 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
 
     // Handle authentication or removal errors
     if ([401, 404, 410].includes(res.status)) {
-      console.warn(`⚠️ Hugging Face error ${res.status}: using local sentiment fallback.`);
+      logger.warn({ service: 'sentiment', status: res.status }, 'Hugging Face error: using local sentiment fallback');
       await logSentimentFallback(res.status);
       
       // Try to get cached result
@@ -82,8 +83,10 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
     return result;
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Unknown error';
-    console.error("Sentiment failed:", err);
+    logger.error({ service: 'sentiment', error: err instanceof Error ? err.message : 'Unknown error' }, 'Sentiment failed');
     await logSentimentFallback(error);
+    const { sendAlert } = await import('./alert');
+    await sendAlert('Sentiment Analysis', error);
     
     // Try to get cached result
     const cached = await getCache("sentiment:last");
@@ -118,7 +121,7 @@ async function logSentimentFallback(cause: string | number): Promise<void> {
     
     await setCache(key, fallbacks, 604800); // 7 days
   } catch (error) {
-    console.error("Error logging sentiment fallback:", error);
+    logger.error({ service: 'sentiment', error: error instanceof Error ? error.message : 'Unknown error' }, 'Error logging sentiment fallback');
   }
 }
 
@@ -132,7 +135,7 @@ export async function analyzeSentimentBatch(texts: string[]): Promise<SentimentR
     if (result.status === 'fulfilled') {
       return result.value;
     } else {
-      console.error(`Sentiment analysis failed for text ${index}:`, result.reason);
+      logger.error({ service: 'sentiment', index, error: result.reason instanceof Error ? result.reason.message : 'Unknown error' }, `Sentiment analysis failed for text ${index}`);
       return { 
         label: 'neutral' as const, 
         confidence: 0.5,

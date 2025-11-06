@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { refreshHistory, COINS } from '@/lib/history';
+import { HistoryRefreshSchema, handleValidationError } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -7,27 +8,7 @@ export const revalidate = 0;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { symbols, days = 30, force = false } = body;
-
-    if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'symbols array is required',
-        },
-        { status: 400 }
-      );
-    }
-
-    if (typeof days !== 'number' || days < 1 || days > 365) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'days must be a number between 1 and 365',
-        },
-        { status: 400 }
-      );
-    }
+    const { symbols, days = 30, force = false } = HistoryRefreshSchema.parse(body);
 
     // Validate symbols
     const validSymbols = symbols
@@ -66,8 +47,8 @@ export async function POST(request: Request) {
       })
     );
 
-    const successful = results.filter(r => r.ok).length;
-    const failed = results.filter(r => !r.ok).length;
+    const successful = results.filter((r: { ok: boolean }) => r.ok).length;
+    const failed = results.filter((r: { ok: boolean }) => !r.ok).length;
 
     return NextResponse.json({
       success: true,
@@ -82,6 +63,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    const validationError = handleValidationError(error);
+    if (validationError) return validationError;
+
     console.error('Error in refresh API:', error);
     return NextResponse.json(
       {
