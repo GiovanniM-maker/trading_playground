@@ -15,6 +15,7 @@ const navLinks = [
   { href: '/trades', label: 'Trades' },
   { href: '/positions', label: 'Positions' },
   { href: '/admin', label: 'Admin' },
+  { href: '/admin/server', label: 'Server' },
 ];
 
 export function HeaderBar() {
