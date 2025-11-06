@@ -9,11 +9,14 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface MarketData {
   symbol: string;
-  price: number;
+  price_usd: number;
+  price?: number; // Legacy field
   change_24h: number;
-  volume_24h: number;
-  market_cap: number;
+  volume_24h: number | null;
+  market_cap: number | null;
   history: Array<{ time: string; price: number }>;
+  sources_used?: string[];
+  consistency_score?: number;
   coin: {
     id: string;
     name: string;
@@ -174,11 +177,16 @@ export default function MarketPage() {
               <>
                 {/* Stats Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  <div className="bg-[#181818] border border-[#222] p-4">
+                  <div className="bg-[#181818] border border-[#222] p-4 relative">
                     <div className="text-xs text-[#a9a9a9] mb-1">Current Price</div>
                     <div className="text-xl font-bold text-[#f5f5e8]">
-                      ${marketData.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${(marketData.price_usd || marketData.price || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
+                    {marketData.sources_used && marketData.sources_used.length > 0 && (
+                      <div className="absolute top-2 right-2" title={`Sources: ${marketData.sources_used.join(', ')}`}>
+                        <div className="w-2 h-2 rounded-full bg-[#00b686]" />
+                      </div>
+                    )}
                   </div>
                   <div className="bg-[#181818] border border-[#222] p-4">
                     <div className="text-xs text-[#a9a9a9] mb-1">24h Change</div>
@@ -192,16 +200,34 @@ export default function MarketPage() {
                   <div className="bg-[#181818] border border-[#222] p-4">
                     <div className="text-xs text-[#a9a9a9] mb-1">24h Volume</div>
                     <div className="text-xl font-bold text-[#f5f5e8]">
-                      {formatNumber(marketData.volume_24h)}
+                      {formatNumber(marketData.volume_24h || 0)}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-[#222] p-4">
                     <div className="text-xs text-[#a9a9a9] mb-1">Market Cap</div>
                     <div className="text-xl font-bold text-[#f5f5e8]">
-                      {formatNumber(marketData.market_cap)}
+                      {formatNumber(marketData.market_cap || 0)}
                     </div>
                   </div>
                 </div>
+
+                {/* Consistency Warning */}
+                {marketData.consistency_score !== undefined && marketData.consistency_score < 0.9 && (
+                  <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span>⚠️</span>
+                      <span>
+                        Low consistency score ({marketData.consistency_score.toFixed(3)}). 
+                        Price data may be inconsistent across sources.
+                        {marketData.sources_used && marketData.sources_used.length > 0 && (
+                          <span className="ml-1 text-xs text-[#a9a9a9]">
+                            (Sources: {marketData.sources_used.join(', ')})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Time Range Selector */}
                 <div className="flex items-center justify-between mb-4">
@@ -228,41 +254,47 @@ export default function MarketPage() {
 
                 {/* Chart */}
                 <div className="flex-grow min-h-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={filteredHistory}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-                      <XAxis 
-                        dataKey="time" 
-                        stroke="#a9a9a9"
-                        tick={{ fill: '#a9a9a9', fontSize: 10 }}
-                        tickFormatter={(value) => new Date(value).toLocaleDateString()}
-                      />
-                      <YAxis 
-                        stroke="#a9a9a9"
-                        tick={{ fill: '#a9a9a9', fontSize: 12 }}
-                        domain={['auto', 'auto']}
-                        tickFormatter={(value) => `$${value.toLocaleString()}`}
-                      />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#181818', 
-                          border: '1px solid #222',
-                          borderRadius: '4px',
-                          color: '#f5f5e8'
-                        }}
-                        formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
-                        labelFormatter={(label) => new Date(label).toLocaleString()}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="price" 
-                        stroke={selectedCoin.color}
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={true}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  {filteredHistory.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-[#a9a9a9]">
+                      No historical data available. Chart will appear once data is collected.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={filteredHistory}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                        <XAxis 
+                          dataKey="time" 
+                          stroke="#a9a9a9"
+                          tick={{ fill: '#a9a9a9', fontSize: 10 }}
+                          tickFormatter={(value) => new Date(value).toLocaleDateString()}
+                        />
+                        <YAxis 
+                          stroke="#a9a9a9"
+                          tick={{ fill: '#a9a9a9', fontSize: 12 }}
+                          domain={['auto', 'auto']}
+                          tickFormatter={(value) => `$${value.toLocaleString()}`}
+                        />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: '#181818', 
+                            border: '1px solid #222',
+                            borderRadius: '4px',
+                            color: '#f5f5e8'
+                          }}
+                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
+                          labelFormatter={(label) => new Date(label).toLocaleString()}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="price" 
+                          stroke={selectedCoin.color}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={true}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </>
             ) : (

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
+import { getAllMarkets } from '@/lib/market';
 import { getLivePrices, getAllHistoricalData } from '@/lib/market/fetch';
 import { getCache, setCache } from '@/lib/redis';
-import { getMarket, updateMarket } from '@/lib/db';
 import { COINS } from '@/lib/market/config';
 
 // Mark as dynamic route
@@ -12,20 +12,23 @@ export async function GET() {
   const errors: string[] = [];
 
   try {
-    // Fetch live prices (check cache first, refresh every 60s)
+    // Fetch multi-source market data
     let livePrices;
-    const liveCacheKey = 'market_live_prices';
-    const cachedLive = await getCache(liveCacheKey);
-    
-    if (cachedLive && Array.isArray(cachedLive) && cachedLive.length > 0) {
-      livePrices = cachedLive;
-    } else {
+    try {
+      const markets = await getAllMarkets();
+      livePrices = markets.map(m => ({
+        symbol: m.symbol,
+        name: COINS.find(c => c.symbol === m.symbol)?.name || m.symbol,
+        price_usd: m.price_usd,
+        change_24h: m.change_24h,
+      }));
+    } catch (error) {
+      console.error('Error fetching multi-source markets:', error);
+      // Fallback to single source
       try {
         livePrices = await getLivePrices();
-        // Cache live prices for 60 seconds
-        await setCache(liveCacheKey, livePrices, 60);
-      } catch (error) {
-        console.error('Error fetching live prices:', error);
+      } catch (fallbackError) {
+        console.error('Error fetching live prices:', fallbackError);
         errors.push('Failed to fetch live prices');
         livePrices = COINS.map(coin => ({
           symbol: coin.symbol,
