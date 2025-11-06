@@ -24,9 +24,6 @@ Sentry.init({
     }),
   ],
   
-  // Enable automatic performance monitoring
-  enableTracing: true,
-  
   // Filter out sensitive data
   beforeSend(event, hint) {
     // Don't send events in development

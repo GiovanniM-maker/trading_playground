@@ -62,6 +62,8 @@ export const NewsSchema = z.object({
 export const SentimentSchema = z.object({
   text: z.string().min(1, 'Text is required'),
   model: z.string().optional(),
+  symbol: z.string().optional(),
+  source: z.string().optional(),
 });
 
 // History refresh validation schema
@@ -86,6 +88,26 @@ export const HistoryClearSchema = z.object({
 // History clear-all validation schema
 export const HistoryClearAllSchema = z.object({
   confirm: z.literal('DELETE_ALL_HISTORY'),
+});
+
+// Trading loop action schema
+export const TradingLoopActionSchema = z.object({
+  action: z.enum(['start', 'stop']),
+});
+
+// History refresh loop action schema
+export const HistoryRefreshLoopActionSchema = z.object({
+  action: z.enum(['start', 'stop']),
+});
+
+// Clear cache schema
+export const ClearCacheSchema = z.object({
+  keys: z.array(z.string()).optional(),
+});
+
+// System restart schema
+export const SystemRestartSchema = z.object({
+  action: z.enum(['clear-cache', 'restart-trading-loop']).optional(),
 });
 
 // Helper function to validate and parse

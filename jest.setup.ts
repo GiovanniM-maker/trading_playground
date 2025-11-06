@@ -9,7 +9,14 @@ global.TextDecoder = TextDecoder as typeof global.TextDecoder;
 jest.setTimeout(15000);
 
 // Mock environment variables for tests
-process.env.NODE_ENV = "test";
+// Note: NODE_ENV is read-only in TypeScript, so we use Object.defineProperty
+if (process.env.NODE_ENV !== "test") {
+  Object.defineProperty(process.env, "NODE_ENV", {
+    value: "test",
+    writable: true,
+    configurable: true,
+  });
+}
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test";
 process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "test-secret-key-for-jest";
 process.env.NEXTAUTH_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";

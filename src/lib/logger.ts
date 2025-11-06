@@ -2,7 +2,7 @@ import pino from 'pino';
 import { getCache, setCache } from './redis';
 
 // Create logger instance
-const logger = pino({
+export const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   transport: process.env.NODE_ENV === 'development'
     ? {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { analyzeSentiment } from '@/lib/sentiment';
 import { saveSentiment } from '@/lib/db';
-import { SentimentTextSchema, handleValidationError } from '@/lib/validation';
+import { SentimentSchema, handleValidationError } from '@/lib/validation';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,7 @@ export const revalidate = 0;
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { text, symbol, source } = SentimentTextSchema.parse(body);
+    const { text, symbol, source } = SentimentSchema.parse(body);
 
     // Limit text length to prevent abuse
     const trimmedText = text.trim().substring(0, 2000);
