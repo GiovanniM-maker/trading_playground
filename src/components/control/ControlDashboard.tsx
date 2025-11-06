@@ -266,6 +266,7 @@ export function ControlDashboard({ baseUrl }: ControlDashboardProps) {
                 logsCount={service.logs?.length || 0}
                 lastUpdate={service.lastUpdate}
                 errorCount={service.errorCount || 0}
+                json={service.json}
               />
             ))}
           </div>

@@ -1,126 +1,152 @@
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
+const MODEL = 'kk08/CryptoBERT';
 
 export interface SentimentResult {
   label: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL';
   score: number;
+  model?: string;
+  latency_ms?: number;
 }
 
 export async function analyzeSentiment(text: string): Promise<SentimentResult> {
+  // Pre-flight check for API key
   if (!HUGGINGFACE_API_KEY) {
-    console.warn('HuggingFace API key not configured, returning neutral sentiment');
+    const errorMsg = 'Missing HUGGINGFACE_API_KEY environment variable';
+    console.warn(errorMsg);
+    
+    // Log to Redis
+    try {
+      const { logError } = await import('./errors/logs');
+      await logError('Hugging Face', errorMsg);
+    } catch {
+      // Ignore logging errors
+    }
+    
     return { label: 'NEUTRAL', score: 0.5 };
   }
 
-  // Try CryptoBERT first, then fallback models (removed deprecated distilbert)
-  const models = [
-    'kk08/CryptoBERT', // Primary crypto-specific model
-    'cardiffnlp/twitter-roberta-base-sentiment-latest',
-    'SamLowe/roberta-base-go_emotions',
-    'j-hartmann/emotion-english-distilroberta-base',
-  ];
+  const startTime = Date.now();
 
-  for (const model of models) {
-    try {
-      const res = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ inputs: text }),
-          signal: AbortSignal.timeout(10000),
-        }
-      );
+  try {
+    const response = await fetch(
+      `https://api-inference.huggingface.co/models/${MODEL}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inputs: text }),
+        signal: AbortSignal.timeout(10000),
+      }
+    );
 
-      if (!res.ok) {
-        // If 410 Gone or 404, try next model (auto-switch to CryptoBERT if primary fails)
-        if ((res.status === 410 || res.status === 404) && models.indexOf(model) < models.length - 1) {
-          // Log error if not CryptoBERT
-          if (model !== 'kk08/CryptoBERT') {
-            const { logError } = await import('./errors/logs');
-            await logError('Hugging Face', `Model ${model} unavailable (${res.status}), switching to fallback`);
-          }
-          continue;
-        }
-        console.error(`HuggingFace API error for ${model}: ${res.status} ${res.statusText}`);
-        
-        // Log error
+    const latency = Date.now() - startTime;
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      const errorMsg = `HTTP ${response.status}: ${errorText}`;
+      
+      console.error(`HuggingFace API error for ${MODEL}:`, errorMsg);
+      
+      // Log error to Redis
+      try {
         const { logError } = await import('./errors/logs');
-        await logError('Hugging Face', `Model ${model}: ${res.status} ${res.statusText}`, res.status);
-        
-        if (models.indexOf(model) === models.length - 1) {
-          // Last model failed
-          return { label: 'NEUTRAL', score: 0.5 };
-        }
-        continue;
+        await logError('Hugging Face', errorMsg, response.status);
+      } catch {
+        // Ignore logging errors
       }
 
-      const data = await res.json();
-    
-      // Handle array response
-      if (Array.isArray(data) && data.length > 0) {
-        const result = data[0];
-        if (Array.isArray(result)) {
-          // Multiple labels returned (CryptoBERT format)
-          const positive = result.find((r: any) => 
-            r.label === 'POSITIVE' || r.label === 'LABEL_1' || 
-            r.label?.toLowerCase().includes('positive') ||
-            r.label === 'positive'
-          );
-          const negative = result.find((r: any) => 
-            r.label === 'NEGATIVE' || r.label === 'LABEL_0' || 
-            r.label?.toLowerCase().includes('negative') ||
-            r.label === 'negative'
-          );
-          
-          if (positive && positive.score > 0.5) {
-            return { label: 'POSITIVE', score: positive.score };
-          } else if (negative && negative.score > 0.5) {
-            return { label: 'NEGATIVE', score: negative.score };
-          }
-        } else if (result && typeof result === 'object') {
-          // Single result object (CryptoBERT may return this format)
-          const label = result.label?.toLowerCase() || '';
-          const score = result.score || 0.5;
-          if (label === 'positive' || label.includes('positive') || label === 'label_1') {
-            return { label: 'POSITIVE', score };
-          } else if (label === 'negative' || label.includes('negative') || label === 'label_0') {
-            return { label: 'NEGATIVE', score };
-          }
-        }
+      // Handle specific error codes
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Authentication failed - check HUGGINGFACE_API_KEY');
+      }
+      
+      if (response.status === 410 || response.status === 404) {
+        throw new Error(`Model ${MODEL} is no longer available`);
       }
 
-      // If response is object format (direct response)
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        const label = data.label?.toLowerCase() || '';
-        const score = data.score || 0.5;
-        if (label === 'positive' || label.includes('positive')) {
-          return { label: 'POSITIVE', score };
-        } else if (label === 'negative' || label.includes('negative')) {
-          return { label: 'NEGATIVE', score };
-        }
-      }
-
-      // If we got here and it's not the last model, try next
-      if (models.indexOf(model) < models.length - 1) {
-        continue;
-      }
-
-      return { label: 'NEUTRAL', score: 0.5 };
-    } catch (error) {
-      // If not the last model, try next
-      if (models.indexOf(model) < models.length - 1) {
-        continue;
-      }
-      console.error('Error analyzing sentiment:', error);
-      return { label: 'NEUTRAL', score: 0.5 };
+      throw new Error(errorMsg);
     }
-  }
 
-  // All models failed
-  return { label: 'NEUTRAL', score: 0.5 };
+    const data = await response.json();
+
+    // CryptoBERT returns array format: [[{label: "POSITIVE", score: 0.9821}, ...]]
+    let output: any;
+    
+    if (Array.isArray(data) && data.length > 0) {
+      output = Array.isArray(data[0]) ? data[0] : data;
+    } else if (data && typeof data === 'object') {
+      output = data;
+    } else {
+      throw new Error('Invalid response format from Hugging Face');
+    }
+
+    // Find the highest confidence label
+    let bestLabel = 'NEUTRAL';
+    let bestScore = 0.5;
+
+    if (Array.isArray(output)) {
+      // Multiple labels returned
+      for (const item of output) {
+        if (item && typeof item === 'object' && item.score) {
+          const label = String(item.label || '').toLowerCase();
+          const score = parseFloat(item.score) || 0;
+          
+          if (score > bestScore) {
+            bestScore = score;
+            if (label.includes('positive') || label === 'positive' || label === 'label_1') {
+              bestLabel = 'POSITIVE';
+            } else if (label.includes('negative') || label === 'negative' || label === 'label_0') {
+              bestLabel = 'NEGATIVE';
+            } else {
+              bestLabel = 'NEUTRAL';
+            }
+          }
+        }
+      }
+    } else if (output && typeof output === 'object') {
+      // Single result object
+      const label = String(output.label || '').toLowerCase();
+      const score = parseFloat(output.score) || 0.5;
+      
+      bestScore = score;
+      if (label.includes('positive') || label === 'positive' || label === 'label_1') {
+        bestLabel = 'POSITIVE';
+      } else if (label.includes('negative') || label === 'negative' || label === 'label_0') {
+        bestLabel = 'NEGATIVE';
+      } else {
+        bestLabel = 'NEUTRAL';
+      }
+    }
+
+    return {
+      label: bestLabel as 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL',
+      score: parseFloat(bestScore.toFixed(4)),
+      model: MODEL,
+      latency_ms: latency,
+    };
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    
+    console.error('Error analyzing sentiment:', errorMsg);
+    
+    // Log error to Redis
+    try {
+      const { logError } = await import('./errors/logs');
+      await logError('Hugging Face', errorMsg, 500);
+    } catch {
+      // Ignore logging errors
+    }
+
+    return {
+      label: 'NEUTRAL',
+      score: 0.5,
+      model: MODEL,
+      latency_ms: latency,
+    };
+  }
 }
 
 export async function analyzeSentimentBatch(texts: string[]): Promise<SentimentResult[]> {

@@ -248,111 +248,110 @@ export async function checkHuggingFace(): Promise<HealthCheckResult> {
     if (!apiKey) {
       return {
         service: 'Hugging Face API',
-        status: 'error',
+        status: 'warning',
         latency: 0,
-        message: 'Missing API key',
+        message: 'Not configured - API key missing',
         timestamp: Date.now(),
       };
     }
 
-    // Try CryptoBERT first, then alternative models (removed deprecated distilbert)
-    const models = [
-      'kk08/CryptoBERT', // Primary crypto-specific model
-      'cardiffnlp/twitter-roberta-base-sentiment-latest',
-      'SamLowe/roberta-base-go_emotions',
-      'j-hartmann/emotion-english-distilroberta-base',
-    ];
+    // Use only CryptoBERT model
+    const model = 'kk08/CryptoBERT';
+    const modelUrl = `https://api-inference.huggingface.co/models/${model}`;
+    
+    const response = await fetchWithTimeout(
+      modelUrl,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inputs: 'Bitcoin is rising!' }),
+      },
+      10000
+    );
 
-    let lastError: Error | null = null;
+    const latency = Date.now() - startTime;
 
-    for (const model of models) {
-      try {
-        const modelUrl = `https://api-inference.huggingface.co/models/${model}`;
-        
-        const response = await fetchWithTimeout(
-          modelUrl,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ inputs: 'Bitcoin is rising!' }),
-          },
-          10000
-        );
-
-        const latency = Date.now() - startTime;
-
-        if (!response.ok) {
-          // If 410 Gone or 404, try next model (don't log as error for deprecated models)
-          if (response.status === 410 || response.status === 404) {
-            lastError = new Error(`Model ${model} is no longer available (${response.status})`);
-            continue;
-          }
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        // Validate response format
-        if (Array.isArray(data) && data.length > 0) {
-          const result = data[0];
-          return {
-            service: 'Hugging Face API',
-            status: 'ok',
-            latency,
-            message: `Working with model: ${model.split('/').pop()}`,
-            timestamp: Date.now(),
-            details: { 
-              model: model.split('/').pop(),
-              label: result.label || result[0]?.label,
-              score: result.score || result[0]?.score,
-            },
-          };
-        }
-
-        // If response is object format
-        if (data && typeof data === 'object' && !Array.isArray(data)) {
-          return {
-            service: 'Hugging Face API',
-            status: 'ok',
-            latency,
-            message: `Working with model: ${model.split('/').pop()}`,
-            timestamp: Date.now(),
-            details: { 
-              model: model.split('/').pop(),
-              label: data.label,
-              score: data.score,
-            },
-          };
-        }
-
-        throw new Error('Invalid response format');
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('Unknown error');
-        // Continue to next model
-        continue;
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      
+      // Log error
+      const { logError } = await import('./errors/logs');
+      await logError('Hugging Face', `HTTP ${response.status}: ${errorText}`, response.status);
+      
+      if (response.status === 401 || response.status === 403) {
+        return {
+          service: 'Hugging Face API',
+          status: 'error',
+          latency,
+          message: `Authentication failed (${response.status}) - check API key`,
+          timestamp: Date.now(),
+          details: { model, error: errorText },
+        };
       }
+      
+      if (response.status === 410 || response.status === 404) {
+        return {
+          service: 'Hugging Face API',
+          status: 'error',
+          latency,
+          message: `Model ${model} unavailable (${response.status})`,
+          timestamp: Date.now(),
+          details: { model, error: errorText },
+        };
+      }
+
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    // All models failed
-    const latency = Date.now() - startTime;
+    const data = await response.json();
+    
+    // Parse CryptoBERT response format
+    let result: any;
+    if (Array.isArray(data) && data.length > 0) {
+      result = Array.isArray(data[0]) ? data[0] : data;
+    } else if (data && typeof data === 'object') {
+      result = data;
+    } else {
+      throw new Error('Invalid response format');
+    }
+
+    // Extract label and score
+    const label = Array.isArray(result) 
+      ? result.find((r: any) => r.score === Math.max(...result.map((r: any) => r.score || 0)))?.label
+      : result.label;
+    const score = Array.isArray(result)
+      ? Math.max(...result.map((r: any) => r.score || 0))
+      : result.score;
+
     return {
       service: 'Hugging Face API',
-      status: 'error',
+      status: 'ok',
       latency,
-      message: lastError?.message || 'All model endpoints failed',
+      message: `Working with model: ${model.split('/').pop()}`,
       timestamp: Date.now(),
-      details: { note: 'Tried multiple models, all unavailable' },
+      details: { 
+        model: model.split('/').pop(),
+        label: label || 'N/A',
+        score: score || 0,
+        latency_ms: latency,
+      },
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('Hugging Face', errorMessage);
+    
     return {
       service: 'Hugging Face API',
       status: 'error',
       latency,
-      message: error instanceof Error ? error.message : 'Connection failed',
+      message: errorMessage,
       timestamp: Date.now(),
     };
   }

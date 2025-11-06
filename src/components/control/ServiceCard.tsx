@@ -12,6 +12,7 @@ interface ServiceCardProps {
   logsCount?: number;
   lastUpdate?: string;
   errorCount?: number;
+  json?: any;
 }
 
 export function ServiceCard({
@@ -23,6 +24,7 @@ export function ServiceCard({
   logsCount = 0,
   lastUpdate,
   errorCount = 0,
+  json,
 }: ServiceCardProps) {
   const getStatusIcon = () => {
     switch (status) {
@@ -46,9 +48,10 @@ export function ServiceCard({
     }
   };
 
-  const getLatencyColor = () => {
-    if (latency < 200) return 'text-[#00b686]';
-    if (latency < 500) return 'text-yellow-500';
+  const getLatencyColor = (latencyValue?: number) => {
+    const lat = latencyValue ?? latency;
+    if (lat < 200) return 'text-[#00b686]';
+    if (lat < 500) return 'text-yellow-500';
     return 'text-[#ff4d4d]';
   };
 
@@ -133,6 +136,22 @@ export function ServiceCard({
             <span className="text-[#a9a9a9]">Errors:</span>
             <span className="text-[#ff4d4d] text-xs font-medium">
               {errorCount}
+            </span>
+          </div>
+        )}
+        {json?.model && (
+          <div className="flex items-center justify-between">
+            <span className="text-[#a9a9a9]">Model:</span>
+            <span className="text-[#f5f5e8] text-xs truncate" title={json.model}>
+              {json.model.split('/').pop()}
+            </span>
+          </div>
+        )}
+        {json?.latency_ms && (
+          <div className="flex items-center justify-between">
+            <span className="text-[#a9a9a9]">Last Inference:</span>
+            <span className={cn("text-xs font-medium", getLatencyColor(json.latency_ms))}>
+              {json.latency_ms}ms
             </span>
           </div>
         )}

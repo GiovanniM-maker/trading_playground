@@ -95,17 +95,22 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
   const start = Date.now();
   
   // Check all services in parallel
-  // Check sentiment API
+  // Check sentiment API with actual inference test
   const sentimentCheck = await Promise.allSettled([
     (async () => {
       const start = performance.now();
       try {
         const url = `${baseUrl || 'http://localhost:3000'}/api/sentiment`;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for inference
         
+        // Test with actual sentiment analysis
         const res = await fetch(url, {
-          method: 'GET',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ text: 'Bitcoin is surging today!' }),
           signal: controller.signal,
         });
         
@@ -122,22 +127,52 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
           // Not JSON, ignore
         }
 
+        // Check if API key is missing
+        if (res.status === 401 || res.status === 403) {
+          const { logEvent } = await import('./logs');
+          await logEvent('Sentiment API', {
+            timestamp: Date.now(),
+            status: 'ERROR',
+            latency,
+            message: `Authentication failed (${res.status})`,
+          });
+        }
+
         return {
           name: 'Sentiment API',
           status: (res.ok ? 'OK' : 'ERROR') as 'OK' | 'ERROR',
           latency,
           code: res.status,
-          json,
+          json: {
+            ...json,
+            model: json.model || 'kk08/CryptoBERT',
+            latency_ms: json.latency_ms || latency,
+          },
           lastUpdate: new Date().toISOString(),
         };
       } catch (e: any) {
         const latency = Math.round(performance.now() - start);
+        const errorMsg = e.message || 'Request failed';
+        
+        // Log error
+        try {
+          const { logEvent } = await import('./logs');
+          await logEvent('Sentiment API', {
+            timestamp: Date.now(),
+            status: 'ERROR',
+            latency,
+            message: errorMsg,
+          });
+        } catch {
+          // Ignore logging errors
+        }
+        
         return {
           name: 'Sentiment API',
           status: 'ERROR' as const,
           latency,
           json: {},
-          error: e.message || 'Request failed',
+          error: errorMsg,
           lastUpdate: new Date().toISOString(),
         };
       }
@@ -178,12 +213,22 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
   // Sentiment API check
   if (sentimentCheck[0].status === 'fulfilled') {
     const sentimentResult = sentimentCheck[0].value;
+    
+    // Determine status based on response
+    let finalStatus: 'OK' | 'ERROR' | 'WARNING' = sentimentResult.status;
+    if (sentimentResult.code === 401 || sentimentResult.code === 403) {
+      finalStatus = 'WARNING'; // Show as warning for missing API key
+    }
+    
     services['Sentiment API'] = {
       name: 'Sentiment API',
-      status: sentimentResult.status,
+      status: finalStatus,
       latency: sentimentResult.latency || 0,
       code: sentimentResult.code,
-      json: sentimentResult.json,
+      json: {
+        ...sentimentResult.json,
+        model: sentimentResult.json?.model || 'kk08/CryptoBERT',
+      },
       error: sentimentResult.error,
       lastUpdate: sentimentResult.lastUpdate,
     };
@@ -191,9 +236,9 @@ export async function getControlStatus(baseUrl: string = ''): Promise<ControlSta
     // Log the event
     await logEvent('Sentiment API', {
       timestamp: Date.now(),
-      status: sentimentResult.status === 'OK' ? 'OK' : 'ERROR',
+      status: finalStatus === 'OK' ? 'OK' : finalStatus === 'WARNING' ? 'WARNING' : 'ERROR',
       latency: sentimentResult.latency || 0,
-      message: sentimentResult.error || 'OK',
+      message: sentimentResult.error || (sentimentResult.json?.model ? `OK - ${sentimentResult.json.model}` : 'OK'),
     });
   }
 

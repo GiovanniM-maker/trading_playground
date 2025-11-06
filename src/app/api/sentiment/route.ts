@@ -12,6 +12,8 @@ interface SentimentRequest {
 interface SentimentResponse {
   label: 'positive' | 'neutral' | 'negative';
   score: number;
+  model: string;
+  latency_ms: number;
   timestamp: string;
   logId?: string;
 }
@@ -43,13 +45,11 @@ export async function POST(request: Request) {
     const text = body.text.trim().substring(0, 2000);
 
     // Analyze sentiment
-    const startTime = Date.now();
     const result: SentimentResult = await analyzeSentiment(text);
-    const latency = Date.now() - startTime;
 
     // Convert label format
     const label = convertLabel(result.label);
-    const score = Math.round(result.score * 1000) / 1000; // Round to 3 decimals
+    const score = parseFloat(result.score.toFixed(4)); // Round to 4 decimals
 
     // Log to Redis
     const logEntry = await logSentiment(text, label, score);
@@ -57,13 +57,17 @@ export async function POST(request: Request) {
     const response: SentimentResponse = {
       label,
       score,
+      model: result.model || 'kk08/CryptoBERT',
+      latency_ms: result.latency_ms || 0,
       timestamp: new Date().toISOString(),
       logId: logEntry.id,
     };
 
     // Add latency header for monitoring
     const nextResponse = NextResponse.json(response);
-    nextResponse.headers.set('X-Latency', latency.toString());
+    if (result.latency_ms) {
+      nextResponse.headers.set('X-Latency', result.latency_ms.toString());
+    }
 
     return nextResponse;
   } catch (error) {
