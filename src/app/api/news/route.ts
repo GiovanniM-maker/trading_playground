@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { fetchCryptoPanic, fetchCoinDesk, fetchCoinTelegraph, fetchCoinGecko } from '@/lib/news/sources';
-import { deduplicateNews } from '@/lib/news/deduplicate';
-import { computeSentiment } from '@/lib/sentiment';
+import { deduplicateNews } from '@/lib/deduplicate';
+import { analyzeSentiment, sentimentToLabel } from '@/lib/sentiment';
+import { getCache, setCache } from '@/lib/redis';
 import { NormalizedNews } from '@/lib/news/normalize';
 
 interface NewsResult extends NormalizedNews {
@@ -20,8 +21,22 @@ interface NewsResponse {
   };
 }
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET() {
   try {
+    // Check Redis cache first
+    const cacheKey = 'news_cache';
+    const cached = await getCache(cacheKey);
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      // Return cached data but still refresh in background
+      return NextResponse.json({
+        results: cached,
+        cached: true,
+      });
+    }
+
     // Fetch all sources in parallel
     const results = await Promise.allSettled([
       fetchCryptoPanic(),
@@ -61,18 +76,22 @@ export async function GET() {
       });
     }
 
-    // Deduplicate using embeddings
-    const deduplicated = await deduplicateNews(validNews);
+    // Deduplicate using simple title-based deduplication
+    const deduplicated = deduplicateNews(validNews);
 
-    // Compute sentiment for each item
+    // Compute sentiment for each item using HuggingFace
     const withSentiment = await Promise.all(
       deduplicated.map(async (item) => {
-        const sentiment = await computeSentiment(item);
+        const text = `${item.title}. ${item.description || ''}`;
+        const sentiment = await analyzeSentiment(text);
+        const label = sentimentToLabel(sentiment);
+        
         return {
           ...item,
+          sentiment: label,
           sentiment_score: sentiment.score,
-          sentiment_label: sentiment.label,
-          sentiment_confidence: sentiment.confidence,
+          sentiment_label: label,
+          published_at: item.published_at,
         };
       })
     );
@@ -85,12 +104,15 @@ export async function GET() {
     // Limit to 50 items
     const limited = withSentiment.slice(0, 50);
 
+    // Cache in Redis for 5 minutes
+    await setCache(cacheKey, limited, 300);
+
     const response = NextResponse.json({
       results: limited,
       source_status: sourceStatus,
     });
     
-    response.headers.set('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=60');
+    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
     
     return response;
   } catch (error) {
