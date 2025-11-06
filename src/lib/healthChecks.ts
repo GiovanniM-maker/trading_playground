@@ -240,6 +240,96 @@ export async function checkCryptoPanic(): Promise<HealthCheckResult> {
   }
 }
 
+export async function checkNewsData(): Promise<HealthCheckResult> {
+  const startTime = Date.now();
+  try {
+    const apiKey = process.env.NEWSDATA_API_KEY;
+    
+    if (!apiKey) {
+      return {
+        service: 'NewsData.io API',
+        status: 'warning',
+        latency: 0,
+        message: 'Not configured - API key missing',
+        timestamp: Date.now(),
+      };
+    }
+
+    const url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=crypto&language=en&size=1`;
+    
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0',
+        },
+      },
+      8000
+    );
+
+    const latency = Date.now() - startTime;
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      
+      // Log error
+      const { logError } = await import('./errors/logs');
+      await logError('NewsData.io', `HTTP ${response.status}: ${errorText}`, response.status);
+      
+      if (response.status === 401 || response.status === 403) {
+        return {
+          service: 'NewsData.io API',
+          status: 'error',
+          latency,
+          message: `Authentication failed (${response.status}) - check API key`,
+          timestamp: Date.now(),
+        };
+      }
+      if (response.status === 429) {
+        return {
+          service: 'NewsData.io API',
+          status: 'warning',
+          latency,
+          message: `Rate limit exceeded (${response.status})`,
+          timestamp: Date.now(),
+        };
+      }
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    
+    return {
+      service: 'NewsData.io API',
+      status: 'ok',
+      latency,
+      message: `Connected (${data.results?.length || 0} articles available)`,
+      timestamp: Date.now(),
+      details: { 
+        count: data.results?.length || 0,
+        total_results: data.totalResults || 0,
+      },
+    };
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+    
+    // Log error
+    const { logError } = await import('./errors/logs');
+    await logError('NewsData.io', errorMessage);
+    
+    return {
+      service: 'NewsData.io API',
+      status: 'error',
+      latency,
+      message: errorMessage,
+      timestamp: Date.now(),
+    };
+  }
+}
+
 export async function checkHuggingFace(): Promise<HealthCheckResult> {
   const startTime = Date.now();
   try {
